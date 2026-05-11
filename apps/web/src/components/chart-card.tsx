@@ -47,15 +47,20 @@ export function ChartCard({
   const canEdit = role === "admin" || (role === "editor" && chart.ownerSessionId === ownerSessionId)
 
   return (
-    <Card className={cn("flex h-full flex-col border-border/70 bg-card/80 shadow-sm backdrop-blur", className)}>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div className="space-y-1">
-          <CardTitle className="text-lg">{chart.title}</CardTitle>
-          <CardDescription className="text-sm">
-            {datasetName ?? chart.datasetId} · {chart.chartType.toUpperCase()}
+    <Card
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden border-border/70 bg-card/80 shadow-sm backdrop-blur",
+        className,
+      )}
+    >
+      <CardHeader className="flex shrink-0 flex-row flex-wrap items-start justify-between gap-3 pb-3">
+        <div className="min-w-0 space-y-1">
+          <CardTitle className="truncate text-lg">{chart.title}</CardTitle>
+          <CardDescription className="truncate text-sm">
+            {datasetName ?? chart.datasetId} - {chart.chartType.toUpperCase()}
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge variant="outline">v{chart.version}</Badge>
           <Badge variant="secondary" className="capitalize">
             {chart.chartType}
@@ -83,9 +88,9 @@ export function ChartCard({
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 min-h-0">
+      <CardContent className="min-h-0 flex-1 overflow-hidden">
         {previewQuery.isPending ? (
-          <div className="flex h-full min-h-[16rem] items-center justify-center">
+          <div className="flex h-full min-h-[12rem] items-center justify-center">
             <Skeleton className="h-8 w-32" />
           </div>
         ) : previewQuery.isError ? (
@@ -94,7 +99,7 @@ export function ChartCard({
             <AlertDescription>{(previewQuery.error as Error).message}</AlertDescription>
           </Alert>
         ) : previewQuery.data ? (
-          <div className="h-full min-h-[16rem] rounded-2xl border border-border/60 bg-background/70 p-4">
+          <div className="h-full min-h-[12rem] overflow-hidden rounded-2xl border border-border/60 bg-background/70 p-3">
             <ChartRenderer
               chartType={chart.chartType}
               query={chart.query}
@@ -104,7 +109,7 @@ export function ChartCard({
         ) : null}
       </CardContent>
 
-      <CardFooter className="justify-between text-xs text-muted-foreground">
+      <CardFooter className="shrink-0 justify-between text-xs text-muted-foreground">
         <span>{previewQuery.data?.rowCount ?? 0} grouped rows</span>
         <span>{previewQuery.data?.cached ? "cached" : "fresh"}</span>
       </CardFooter>
