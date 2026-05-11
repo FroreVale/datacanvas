@@ -3,13 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowRight,
   BarChart3,
-  Filter,
   LineChart,
   PieChart,
-  Plus,
   Table2,
   Wand2,
-  X,
 } from "lucide-react"
 import { fetchDashboards, fetchDatasets, fetchPreview, createChart } from "@/lib/api"
 import { useAppStore, type BuilderMetric } from "@/stores/use-app-store"
@@ -25,7 +22,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ChartRenderer } from "@/components/chart-renderer"
 import {
@@ -53,6 +49,114 @@ function metricLabel(metric: BuilderMetric) {
   }
 
   return `${metric.aggregation.toUpperCase()} ${metric.column}`
+}
+
+function formatFilterOperator(operator: FilterOperator) {
+  switch (operator) {
+    case "contains":
+      return "~"
+    case "eq":
+      return "="
+    case "neq":
+      return "≠"
+    case "gt":
+      return ">"
+    case "gte":
+      return "≥"
+    case "lt":
+      return "<"
+    case "lte":
+      return "≤"
+    default:
+      return operator
+  }
+}
+
+function ListRow({
+  value,
+  onRemove,
+  onClick,
+  isAdd = false,
+}: {
+  value: string
+  onRemove?: () => void
+  onClick: () => void
+  isAdd?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors",
+        isAdd
+          ? "text-muted-foreground hover:bg-muted/40"
+          : "hover:bg-muted/20",
+      ].join(" ")}
+    >
+      <div className="min-w-0 truncate font-medium">{value}</div>
+      {onRemove ? (
+        <span
+          role="button"
+          tabIndex={0}
+          className="rounded-full px-2 py-1 text-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onRemove()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              event.stopPropagation()
+              onRemove()
+            }
+          }}
+        >
+          ×
+        </span>
+      ) : isAdd ? (
+        <span className="text-lg leading-none text-muted-foreground">+</span>
+      ) : null}
+    </button>
+  )
+}
+
+function ListBox({
+  title,
+  required,
+  entries,
+  addLabel,
+  onAdd,
+}: {
+  title: string
+  required?: boolean
+  entries: Array<{
+    key: string
+    value: string
+    onRemove: () => void
+  }>
+  addLabel: string
+  onAdd: () => void
+}) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center gap-1 text-sm font-medium">
+        <span>{title}</span>
+        {required ? <span className="text-destructive">*</span> : null}
+      </div>
+      <div className="overflow-hidden rounded-xl border border-border/70 bg-background">
+        {entries.map((entry, index) => (
+          <div key={entry.key} className={index > 0 ? "border-t border-border/60" : ""}>
+            <ListRow value={entry.value} onRemove={entry.onRemove} onClick={onAdd} />
+          </div>
+        ))}
+        <div className={entries.length > 0 ? "border-t border-border/60" : ""}>
+          <ListRow value={addLabel} onClick={onAdd} isAdd />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function BuilderPage() {
@@ -285,6 +389,18 @@ export function BuilderPage() {
     setFilterDialogOpen(false)
   }
 
+  const clearFilter = () => {
+    setDraft({
+      filterColumn: "",
+      filterOperator: "contains",
+      filterValue: "",
+    })
+    setFilterColumnDraft("")
+    setFilterOperatorDraft("contains")
+    setFilterValueDraft("")
+    setFilterDialogOpen(false)
+  }
+
   const chartTypeOptions = [
     { value: "bar" as const, label: "Bar chart", icon: BarChart3 },
     { value: "line" as const, label: "Line chart", icon: LineChart },
@@ -342,226 +458,187 @@ export function BuilderPage() {
           </div>
         </section>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,320px)_1px_minmax(0,1fr)]">
-          <form onSubmit={previewHandler} className="grid gap-4">
-            <div className="grid gap-4">
-              <div className="grid gap-2">
-                <div className="text-sm font-medium">Visualization</div>
-                <div className="flex flex-wrap gap-2">
-                  {chartTypeOptions.map(({ value, label, icon: Icon }) => {
-                    const active = draft.chartType === value
-                    return (
-                      <Tooltip key={value}>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant={active ? "secondary" : "outline"}
-                            className="h-10 w-10 p-0"
-                            onClick={() =>
-                              setDraft({
-                                chartType: value,
-                                tableMode: value === "table" ? draft.tableMode : "raw",
-                              })
-                            }
-                          >
-                            <Icon className="size-4" />
-                            <span className="sr-only">{label}</span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{label}</TooltipContent>
-                      </Tooltip>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {draft.chartType === "table" ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,320px)_1px_minmax(0,1fr)] xl:items-start">
+          <form onSubmit={previewHandler} className="grid gap-4 self-start">
+            <div className="max-h-[calc(100vh-13rem)] overflow-auto pr-1">
+              <div className="grid gap-4">
                 <div className="grid gap-2">
-                  <div className="text-sm font-medium">Table mode</div>
-                  <div className="flex gap-2">
-                    {tableModeOptions.map((option) => (
-                      <Button
-                        key={option.value}
-                        type="button"
-                        variant={draft.tableMode === option.value ? "secondary" : "outline"}
-                        className="h-9"
-                        onClick={() => setDraft({ tableMode: option.value })}
-                      >
-                        {option.label}
-                      </Button>
-                    ))}
+                  <div className="text-sm font-medium">Visualization</div>
+                  <div className="flex flex-wrap gap-2">
+                    {chartTypeOptions.map(({ value, label, icon: Icon }) => {
+                      const active = draft.chartType === value
+                      return (
+                        <Tooltip key={value}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant={active ? "secondary" : "outline"}
+                              className="h-10 w-10 p-0"
+                              onClick={() =>
+                                setDraft({
+                                  chartType: value,
+                                  tableMode: value === "table" ? draft.tableMode : "raw",
+                                })
+                              }
+                            >
+                              <Icon className="size-4" />
+                              <span className="sr-only">{label}</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{label}</TooltipContent>
+                        </Tooltip>
+                      )
+                    })}
                   </div>
                 </div>
-              ) : null}
 
-              {draft.chartType === "table" && draft.tableMode === "raw" ? (
+                {draft.chartType === "table" ? (
+                  <div className="grid gap-2">
+                    <div className="text-sm font-medium">Table mode</div>
+                    <div className="flex gap-2">
+                      {tableModeOptions.map((option) => (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          variant={draft.tableMode === option.value ? "secondary" : "outline"}
+                          className="h-9"
+                          onClick={() => setDraft({ tableMode: option.value })}
+                        >
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {draft.chartType === "table" && draft.tableMode === "raw" ? (
+                  <div className="grid gap-2">
+                    <ListBox
+                      title="Columns"
+                      required={draft.tableColumns.length === 0}
+                      entries={draft.tableColumns.map((column) => ({
+                        key: column,
+                        value: column,
+                        onRemove: () => removeTableColumn(column),
+                      }))}
+                      addLabel="Add column"
+                      onAdd={() => openFieldDialog("tableColumn")}
+                    />
+                  </div>
+                ) : null}
+
+                {draft.chartType === "table" && draft.tableMode === "summary" ? (
+                  <div className="grid gap-4">
+                    <ListBox
+                      title="Group by"
+                      required={requirements.dimensionRequired}
+                      entries={draft.dimensions.map((dimension) => ({
+                        key: dimension,
+                        value: dimension,
+                        onRemove: () => removeDimension(dimension),
+                      }))}
+                      addLabel="Add dimension"
+                      onAdd={() => openFieldDialog("dimension")}
+                    />
+
+                    <ListBox
+                      title="Metrics"
+                      required={requirements.metricRequired}
+                      entries={draft.metrics.map((metric, index) => ({
+                        key: `${metric.column}-${metric.aggregation}-${index}`,
+                        value: metricLabel(metric),
+                        onRemove: () => removeMetric(index),
+                      }))}
+                      addLabel="Add metric"
+                      onAdd={() => openFieldDialog("metric")}
+                    />
+                  </div>
+                ) : null}
+
+                {draft.chartType !== "table" ? (
+                  <>
+                    <ListBox
+                      title="Group by"
+                      required={requirements.dimensionRequired}
+                      entries={draft.dimensions.map((dimension) => ({
+                        key: dimension,
+                        value: dimension,
+                        onRemove: () => removeDimension(dimension),
+                      }))}
+                      addLabel="Add dimension"
+                      onAdd={() => openFieldDialog("dimension")}
+                    />
+
+                    <ListBox
+                      title="Metrics"
+                      required={requirements.metricRequired}
+                      entries={draft.metrics.map((metric, index) => ({
+                        key: `${metric.column}-${metric.aggregation}-${index}`,
+                        value: metricLabel(metric),
+                        onRemove: () => removeMetric(index),
+                      }))}
+                      addLabel="Add metric"
+                      onAdd={() => openFieldDialog("metric")}
+                    />
+                  </>
+                ) : null}
+
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium">
-                      Columns
-                      {draft.tableColumns.length === 0 ? <span className="ml-1 text-destructive">*</span> : null}
+                    <div className="text-sm font-medium">Filters</div>
+                    <div className="flex items-center gap-2">
+                      {(draft.filterColumn || draft.filterValue.trim()) ? (
+                        <Button type="button" variant="ghost" className="h-8" onClick={clearFilter}>
+                          Clear
+                        </Button>
+                      ) : null}
                     </div>
-                    <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => openFieldDialog("tableColumn")}>
-                      <Plus className="size-4" />
-                      Add
-                    </Button>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {draft.tableColumns.map((column) => (
-                      <Badge key={column} variant="secondary" className="gap-1.5 rounded-full px-3 py-1">
-                        {column}
-                        <button type="button" onClick={() => removeTableColumn(column)} aria-label={`Remove ${column}`}>
-                          <X className="size-3" />
-                        </button>
-                      </Badge>
-                    ))}
+                  <div className="overflow-hidden rounded-xl border border-border/70 bg-background">
+                    {draft.filterValue.trim() || draft.filterColumn ? (
+                      <div className="border-t border-border/60 first:border-t-0">
+                        <ListRow
+                          value={`${draft.filterColumn} ${formatFilterOperator(draft.filterOperator)} ${draft.filterValue}`}
+                          onRemove={clearFilter}
+                          onClick={() => setFilterDialogOpen(true)}
+                        />
+                      </div>
+                    ) : (
+                      <ListRow value="Add filter" onClick={() => setFilterDialogOpen(true)} isAdd />
+                    )}
                   </div>
                 </div>
-              ) : (
-                <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">
-                        Group by
-                        {requirements.dimensionRequired ? <span className="ml-1 text-destructive">*</span> : null}
-                      </div>
-                      <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => openFieldDialog("dimension")}>
-                        <Plus className="size-4" />
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.dimensions.map((dimension) => (
-                        <Badge key={dimension} variant="secondary" className="gap-1.5 rounded-full px-3 py-1">
-                          {dimension}
-                          <button type="button" onClick={() => removeDimension(dimension)} aria-label={`Remove ${dimension}`}>
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
 
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">
-                        Metrics
-                        {requirements.metricRequired ? <span className="ml-1 text-destructive">*</span> : null}
-                      </div>
-                      <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => openFieldDialog("metric")}>
-                        <Plus className="size-4" />
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.metrics.map((metric, index) => (
-                        <Badge key={`${metric.column}-${metric.aggregation}-${index}`} variant="secondary" className="gap-1.5 rounded-full px-3 py-1">
-                          {metricLabel(metric)}
-                          <button type="button" onClick={() => removeMetric(index)} aria-label={`Remove metric ${index}`}>
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
+                <label className="grid gap-1.5 text-sm">
+                  <span className="font-medium">Limit</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={draft.limit}
+                    onChange={(event) => setDraft({ limit: Math.max(1, Number(event.target.value || 1)) })}
+                  />
+                </label>
 
-                </div>
-              )}
-
-              {draft.chartType === "table" && draft.tableMode === "summary" ? (
-                <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">
-                        Group by
-                        {requirements.dimensionRequired ? <span className="ml-1 text-destructive">*</span> : null}
-                      </div>
-                      <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => openFieldDialog("dimension")}>
-                        <Plus className="size-4" />
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.dimensions.map((dimension) => (
-                        <Badge key={dimension} variant="secondary" className="gap-1.5 rounded-full px-3 py-1">
-                          {dimension}
-                          <button type="button" onClick={() => removeDimension(dimension)} aria-label={`Remove ${dimension}`}>
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">
-                        Metrics
-                        {requirements.metricRequired ? <span className="ml-1 text-destructive">*</span> : null}
-                      </div>
-                      <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => openFieldDialog("metric")}>
-                        <Plus className="size-4" />
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.metrics.map((metric, index) => (
-                        <Badge key={`${metric.column}-${metric.aggregation}-${index}`} variant="secondary" className="gap-1.5 rounded-full px-3 py-1">
-                          {metricLabel(metric)}
-                          <button type="button" onClick={() => removeMetric(index)} aria-label={`Remove metric ${index}`}>
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">Filters</div>
-                  <Button type="button" variant="outline" className="h-8 gap-2" onClick={() => setFilterDialogOpen(true)}>
-                    <Filter className="size-4" />
-                    Add
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <Button type="submit" variant="outline" disabled={!isPreviewAllowed || previewMutation.isPending}>
+                    <ArrowRight className="size-4" />
+                    {previewMutation.isPending ? "Previewing..." : "Preview"}
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={
+                      !activeDashboard ||
+                      !preview ||
+                      !previewMatchesCurrentQuery ||
+                      createChartMutation.isPending
+                    }
+                    onClick={() => setSaveDialogOpen(true)}
+                  >
+                    <Wand2 className="size-4" />
+                    Save chart
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {draft.filterValue.trim()
-                    ? `${draft.filterColumn} ${draft.filterOperator} ${draft.filterValue}`
-                    : "No filter applied."}
-                </p>
-              </div>
-
-              <label className="grid gap-1.5 text-sm">
-                <span className="font-medium">Limit</span>
-                <Input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={draft.limit}
-                  onChange={(event) => setDraft({ limit: Math.max(1, Number(event.target.value || 1)) })}
-                />
-              </label>
-
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <Button type="submit" variant="outline" disabled={!isPreviewAllowed || previewMutation.isPending}>
-                  <ArrowRight className="size-4" />
-                  {previewMutation.isPending ? "Previewing..." : "Preview"}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={
-                    !activeDashboard ||
-                    !preview ||
-                    !previewMatchesCurrentQuery ||
-                    createChartMutation.isPending
-                  }
-                  onClick={() => setSaveDialogOpen(true)}
-                >
-                  <Wand2 className="size-4" />
-                  Save chart
-                </Button>
               </div>
             </div>
           </form>
@@ -569,10 +646,14 @@ export function BuilderPage() {
           <div className="hidden xl:block h-full w-px bg-border/70" />
           <div className="block xl:hidden h-px w-full bg-border/70" />
 
-          <section className="grid gap-3">
+          <section className="grid gap-3 self-start min-h-0">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold">Preview</h2>
-              {preview ? <Badge variant={preview.cached ? "secondary" : "outline"}>{preview.cached ? "cached" : "fresh"}</Badge> : null}
+              {preview ? (
+                <Badge variant={preview.cached ? "secondary" : "outline"}>
+                  {preview.cached ? "cached" : "fresh"}
+                </Badge>
+              ) : null}
             </div>
 
             {previewMutation.isError ? (
@@ -583,39 +664,22 @@ export function BuilderPage() {
             ) : null}
 
             {preview ? (
-              <div className="grid gap-4">
-                <div>
-                  <div className="mb-3 text-sm text-muted-foreground">
-                    {preview.rowCount} rows · {preview.executionMs.toFixed(1)}ms
-                  </div>
-                  <div className="h-[320px]">
-                    <ChartRenderer
-                      chartType={draft.chartType}
-                      query={queryConfig ?? buildQueryConfig(draft, activeDataset?.id ?? "")}
-                      preview={preview}
-                    />
-                  </div>
+              <div className="grid gap-2">
+                <div className="text-sm text-muted-foreground">
+                  {preview.rowCount} rows · {preview.executionMs.toFixed(1)}ms
                 </div>
-
-                <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/70">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        {preview.columns.map((column) => (
-                          <TableHead key={column.key}>{column.label}</TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {preview.rows.map((row, index) => (
-                        <TableRow key={index}>
-                          {preview.columns.map((column) => (
-                            <TableCell key={column.key}>{String(row[column.key] ?? "")}</TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div
+                  className={
+                    draft.chartType === "table"
+                      ? "max-h-[28rem] overflow-auto"
+                      : "h-[22rem]"
+                  }
+                >
+                  <ChartRenderer
+                    chartType={draft.chartType}
+                    query={queryConfig ?? buildQueryConfig(draft, activeDataset?.id ?? "")}
+                    preview={preview}
+                  />
                 </div>
               </div>
             ) : (
@@ -661,15 +725,15 @@ export function BuilderPage() {
                         ))
                       : fieldDialog === "tableColumn"
                         ? tableColumns.map((column) => (
-                          <SelectItem key={column.name} value={column.name}>
-                            {column.label}
-                          </SelectItem>
-                        ))
+                            <SelectItem key={column.name} value={column.name}>
+                              {column.label}
+                            </SelectItem>
+                          ))
                         : dimensionOptions.map((column) => (
-                          <SelectItem key={column.name} value={column.name}>
-                            {column.label}
-                          </SelectItem>
-                        ))}
+                            <SelectItem key={column.name} value={column.name}>
+                              {column.label}
+                            </SelectItem>
+                          ))}
                   </SelectContent>
                 </Select>
               </label>
@@ -764,6 +828,9 @@ export function BuilderPage() {
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="ghost" onClick={clearFilter}>
+                  Clear filter
+                </Button>
                 <Button type="button" variant="outline" onClick={() => setFilterDialogOpen(false)}>
                   Cancel
                 </Button>

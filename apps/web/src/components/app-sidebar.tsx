@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { ModeToggle } from "@/components/mode-toggle"
 
 const navItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -128,16 +127,6 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="gap-3">
-        <div className="rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/20 p-3">
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-sidebar-foreground/60">
-            Theme
-          </p>
-          <div className="mt-3">
-            <ModeToggle />
-          </div>
-        </div>
-      </SidebarFooter>
     </Sidebar>
   )
 }

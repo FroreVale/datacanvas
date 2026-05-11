@@ -56,7 +56,7 @@ function labelKey(row: Record<string, unknown>, dimensions: string[]) {
   return dimensions
     .map((dimension) => String(row[dimension] ?? ""))
     .filter(Boolean)
-    .join(" · ")
+    .join(" • ")
 }
 
 function chartRows(query: QueryConfig, preview: QueryPreviewResult) {
@@ -88,7 +88,7 @@ export function ChartRenderer({
 
   if (chartType === "table") {
     return (
-      <div className="overflow-hidden rounded-xl border border-border/60">
+      <div className="max-h-[28rem] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -98,7 +98,7 @@ export function ChartRenderer({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {preview.rows.slice(0, 8).map((row, index) => (
+            {preview.rows.map((row, index) => (
               <TableRow key={index}>
                 {preview.columns.map((column) => (
                   <TableCell key={column.key}>{String(row[column.key] ?? "")}</TableCell>
