@@ -420,17 +420,12 @@ export function BuilderPage() {
                   {draft.chartType}
                 </Badge>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Build the query, preview the result, then save the chart.
-              </p>
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                <Badge variant="outline" className="capitalize">
-                  {role}
-                </Badge>
-                <span>{preview?.rowCount?.toString() ?? "0"} rows</span>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">Dataset</span>
+                <span>:</span>
               </div>
               <Select
                 value={activeDataset?.id ?? ""}
