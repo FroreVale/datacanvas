@@ -88,12 +88,14 @@ export function ChartRenderer({
 
   if (chartType === "table") {
     return (
-      <div className="max-h-[28rem] overflow-auto">
-        <Table>
+      <div className="w-full overflow-hidden">
+        <Table className="w-full table-fixed">
           <TableHeader>
             <TableRow>
               {preview.columns.map((column) => (
-                <TableHead key={column.key}>{column.label}</TableHead>
+                <TableHead key={column.key} className="truncate">
+                  {column.label}
+                </TableHead>
               ))}
             </TableRow>
           </TableHeader>
@@ -101,7 +103,9 @@ export function ChartRenderer({
             {preview.rows.map((row, index) => (
               <TableRow key={index}>
                 {preview.columns.map((column) => (
-                  <TableCell key={column.key}>{String(row[column.key] ?? "")}</TableCell>
+                  <TableCell key={column.key} className="truncate">
+                    {String(row[column.key] ?? "")}
+                  </TableCell>
                 ))}
               </TableRow>
             ))}

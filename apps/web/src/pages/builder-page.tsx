@@ -87,8 +87,8 @@ function ListRow({
     <button
       type="button"
       onClick={onClick}
-      className={[
-        "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors",
+    className={[
+        "flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm transition-colors",
         isAdd
           ? "text-muted-foreground hover:bg-muted/40"
           : "hover:bg-muted/20",
@@ -99,7 +99,7 @@ function ListRow({
         <span
           role="button"
           tabIndex={0}
-          className="rounded-full px-2 py-1 text-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="flex size-5 shrink-0 items-center justify-center rounded-full text-lg leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
@@ -116,7 +116,9 @@ function ListRow({
           ×
         </span>
       ) : isAdd ? (
-        <span className="text-lg leading-none text-muted-foreground">+</span>
+        <span className="flex size-5 shrink-0 items-center justify-center text-lg leading-none text-muted-foreground">
+          +
+        </span>
       ) : null}
     </button>
   )
@@ -214,7 +216,6 @@ export function BuilderPage() {
         tableColumns: draft.tableColumns,
         dimensions: draft.dimensions,
         metrics: draft.metrics,
-        filterColumn: draft.filterColumn,
       },
     })
 
@@ -222,12 +223,11 @@ export function BuilderPage() {
       normalized.tableMode !== draft.tableMode ||
       JSON.stringify(normalized.tableColumns) !== JSON.stringify(draft.tableColumns) ||
       JSON.stringify(normalized.dimensions) !== JSON.stringify(draft.dimensions) ||
-      JSON.stringify(normalized.metrics) !== JSON.stringify(draft.metrics) ||
-      normalized.filterColumn !== draft.filterColumn
+      JSON.stringify(normalized.metrics) !== JSON.stringify(draft.metrics)
     ) {
       setDraft(normalized)
     }
-  }, [activeDataset, draft, setDraft])
+  }, [activeDataset?.id, draft.chartType, draft.tableMode, setDraft])
 
   const requirements = useMemo(
     () => getChartRequirements(draft.chartType, draft.tableMode),
@@ -240,10 +240,6 @@ export function BuilderPage() {
   const metricOptions = useMemo(() => getMetricOptions(activeDataset), [activeDataset])
   const tableModeOptions = useMemo(() => getTableModeOptions(), [])
   const tableColumns = activeDataset?.columns ?? []
-  const queryConfig = useMemo(
-    () => (activeDataset ? buildQueryConfig(draft, activeDataset.id) : null),
-    [activeDataset, draft],
-  )
 
   const previewMutation = useMutation({
     mutationFn: fetchPreview,
@@ -263,24 +259,48 @@ export function BuilderPage() {
   const [saveTitleDraft, setSaveTitleDraft] = useState(draft.chartTitle)
   const [newFieldColumn, setNewFieldColumn] = useState("")
   const [newFieldAggregation, setNewFieldAggregation] = useState<"sum" | "avg" | "count" | "min" | "max">("sum")
-  const [filterColumnDraft, setFilterColumnDraft] = useState(draft.filterColumn)
-  const [filterOperatorDraft, setFilterOperatorDraft] = useState<FilterOperator>(draft.filterOperator)
-  const [filterValueDraft, setFilterValueDraft] = useState(draft.filterValue)
+  const [filtersDraft, setFiltersDraft] = useState<
+    Array<{ column: string; operator: FilterOperator; value: string }>
+  >([])
+  const [filterColumnDraft, setFilterColumnDraft] = useState("")
+  const [filterOperatorDraft, setFilterOperatorDraft] = useState<FilterOperator>("eq")
+  const [filterValueDraft, setFilterValueDraft] = useState("")
   const preview = previewMutation.data
 
   useEffect(() => {
     if (filterDialogOpen) {
-      setFilterColumnDraft(draft.filterColumn)
-      setFilterOperatorDraft(draft.filterOperator)
-      setFilterValueDraft(draft.filterValue)
+      if (!filterColumnDraft) {
+        setFilterColumnDraft(tableColumns[0]?.name ?? "")
+      }
+      if (!filterValueDraft) {
+        setFilterValueDraft("")
+      }
     }
-  }, [draft.filterColumn, draft.filterOperator, draft.filterValue, filterDialogOpen])
+  }, [filterColumnDraft, filterDialogOpen, tableColumns, filterValueDraft])
 
   useEffect(() => {
     if (saveDialogOpen) {
       setSaveTitleDraft(draft.chartTitle || "Untitled chart")
     }
   }, [draft.chartTitle, saveDialogOpen])
+
+  const queryConfig = useMemo(() => {
+    if (!activeDataset) {
+      return null
+    }
+
+    const baseQuery = buildQueryConfig(draft, activeDataset.id)
+    return {
+      ...baseQuery,
+      filters: filtersDraft
+        .filter((filter) => filter.column.trim() && filter.value.trim())
+        .map((filter) => ({
+          column: filter.column,
+          operator: filter.operator,
+          value: filter.value,
+        })),
+    } satisfies QueryConfig
+  }, [activeDataset, draft, filtersDraft])
 
   const previewMatchesCurrentQuery =
     !!queryConfig && !!previewConfig && JSON.stringify(queryConfig) === JSON.stringify(previewConfig)
@@ -346,6 +366,8 @@ export function BuilderPage() {
       if (!draft.dimensions.includes(newFieldColumn)) {
         setDraft({ dimensions: [...draft.dimensions, newFieldColumn] })
       }
+      setPreviewConfig(null)
+      previewMutation.reset()
     }
 
     if (fieldDialog === "metric" && newFieldColumn) {
@@ -356,12 +378,16 @@ export function BuilderPage() {
       if (!draft.metrics.some((metric) => metric.column === nextMetric.column && metric.aggregation === nextMetric.aggregation)) {
         setDraft({ metrics: [...draft.metrics, nextMetric] })
       }
+      setPreviewConfig(null)
+      previewMutation.reset()
     }
 
     if (fieldDialog === "tableColumn" && newFieldColumn) {
       if (!draft.tableColumns.includes(newFieldColumn)) {
         setDraft({ tableColumns: [...draft.tableColumns, newFieldColumn] })
       }
+      setPreviewConfig(null)
+      previewMutation.reset()
     }
 
     setFieldDialog(null)
@@ -370,35 +396,57 @@ export function BuilderPage() {
 
   const removeDimension = (dimension: string) => {
     setDraft({ dimensions: draft.dimensions.filter((entry) => entry !== dimension) })
+    setPreviewConfig(null)
+    previewMutation.reset()
   }
 
   const removeMetric = (index: number) => {
     setDraft({ metrics: draft.metrics.filter((_, metricIndex) => metricIndex !== index) })
+    setPreviewConfig(null)
+    previewMutation.reset()
   }
 
   const removeTableColumn = (column: string) => {
     setDraft({ tableColumns: draft.tableColumns.filter((entry) => entry !== column) })
+    setPreviewConfig(null)
+    previewMutation.reset()
   }
 
   const applyFilter = () => {
-    setDraft({
-      filterColumn: filterColumnDraft,
-      filterOperator: filterOperatorDraft,
-      filterValue: filterValueDraft,
-    })
+    if (!filterColumnDraft.trim() || !filterValueDraft.trim()) {
+      return
+    }
+
+    setFiltersDraft((current) => [
+      ...current,
+      {
+        column: filterColumnDraft,
+        operator: filterOperatorDraft,
+        value: filterValueDraft,
+      },
+    ])
+    setPreviewConfig(null)
+    previewMutation.reset()
     setFilterDialogOpen(false)
+    setFilterColumnDraft(tableColumns[0]?.name ?? "")
+    setFilterOperatorDraft("eq")
+    setFilterValueDraft("")
   }
 
   const clearFilter = () => {
-    setDraft({
-      filterColumn: "",
-      filterOperator: "contains",
-      filterValue: "",
-    })
+    setFiltersDraft([])
+    setPreviewConfig(null)
+    previewMutation.reset()
     setFilterColumnDraft("")
-    setFilterOperatorDraft("contains")
+    setFilterOperatorDraft("eq")
     setFilterValueDraft("")
     setFilterDialogOpen(false)
+  }
+
+  const removeFilter = (index: number) => {
+    setFiltersDraft((current) => current.filter((_, currentIndex) => currentIndex !== index))
+    setPreviewConfig(null)
+    previewMutation.reset()
   }
 
   const chartTypeOptions = [
@@ -410,8 +458,8 @@ export function BuilderPage() {
 
   return (
     <TooltipProvider>
-      <div className="grid gap-4">
-        <section className="grid gap-3 border-b border-border/60 pb-4">
+      <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+        <section className="sticky top-0 z-10 grid gap-3 border-b border-border/60 bg-background/95 pb-4 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -425,7 +473,6 @@ export function BuilderPage() {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">Dataset</span>
-                <span>:</span>
               </div>
               <Select
                 value={activeDataset?.id ?? ""}
@@ -453,10 +500,10 @@ export function BuilderPage() {
           </div>
         </section>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,320px)_1px_minmax(0,1fr)] xl:items-start">
-          <form onSubmit={previewHandler} className="grid gap-4 self-start">
-            <div className="max-h-[calc(100vh-13rem)] overflow-auto pr-1">
-              <div className="grid gap-4">
+        <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(0,280px)_1px_minmax(0,1fr)] xl:items-stretch">
+          <form onSubmit={previewHandler} className="flex min-h-0 flex-1 flex-col gap-4 self-stretch overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <div className="grid gap-4 pb-4">
                 <div className="grid gap-2">
                   <div className="text-sm font-medium">Visualization</div>
                   <div className="flex flex-wrap gap-2">
@@ -582,7 +629,7 @@ export function BuilderPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">Filters</div>
                     <div className="flex items-center gap-2">
-                      {(draft.filterColumn || draft.filterValue.trim()) ? (
+                      {filtersDraft.length > 0 ? (
                         <Button type="button" variant="ghost" className="h-8" onClick={clearFilter}>
                           Clear
                         </Button>
@@ -590,17 +637,21 @@ export function BuilderPage() {
                     </div>
                   </div>
                   <div className="overflow-hidden rounded-xl border border-border/70 bg-background">
-                    {draft.filterValue.trim() || draft.filterColumn ? (
-                      <div className="border-t border-border/60 first:border-t-0">
+                    {filtersDraft.map((filter, index) => (
+                      <div
+                        key={`${filter.column}-${filter.operator}-${filter.value}-${index}`}
+                        className={index > 0 ? "border-t border-border/60" : ""}
+                      >
                         <ListRow
-                          value={`${draft.filterColumn} ${formatFilterOperator(draft.filterOperator)} ${draft.filterValue}`}
-                          onRemove={clearFilter}
+                          value={`${filter.column} ${formatFilterOperator(filter.operator)} ${filter.value}`}
+                          onRemove={() => removeFilter(index)}
                           onClick={() => setFilterDialogOpen(true)}
                         />
                       </div>
-                    ) : (
+                    ))}
+                    <div className={filtersDraft.length > 0 ? "border-t border-border/60" : ""}>
                       <ListRow value="Add filter" onClick={() => setFilterDialogOpen(true)} isAdd />
-                    )}
+                    </div>
                   </div>
                 </div>
 
@@ -615,25 +666,27 @@ export function BuilderPage() {
                   />
                 </label>
 
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <Button type="submit" variant="outline" disabled={!isPreviewAllowed || previewMutation.isPending}>
-                    <ArrowRight className="size-4" />
-                    {previewMutation.isPending ? "Previewing..." : "Preview"}
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={
-                      !activeDashboard ||
-                      !preview ||
-                      !previewMatchesCurrentQuery ||
-                      createChartMutation.isPending
-                    }
-                    onClick={() => setSaveDialogOpen(true)}
-                  >
-                    <Wand2 className="size-4" />
-                    Save chart
-                  </Button>
-                </div>
+              </div>
+            </div>
+            <div className="sticky bottom-0 shrink-0 border-t border-border/60 bg-background pt-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="submit" variant="outline" disabled={!isPreviewAllowed || previewMutation.isPending}>
+                  <ArrowRight className="size-4" />
+                  {previewMutation.isPending ? "Previewing..." : "Preview"}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={
+                    !activeDashboard ||
+                    !preview ||
+                    !previewMatchesCurrentQuery ||
+                    createChartMutation.isPending
+                  }
+                  onClick={() => setSaveDialogOpen(true)}
+                >
+                  <Wand2 className="size-4" />
+                  Save chart
+                </Button>
               </div>
             </div>
           </form>
@@ -641,11 +694,21 @@ export function BuilderPage() {
           <div className="hidden xl:block h-full w-px bg-border/70" />
           <div className="block xl:hidden h-px w-full bg-border/70" />
 
-          <section className="grid gap-3 self-start min-h-0">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold">Preview</h2>
+          <section className="flex min-h-0 flex-1 flex-col gap-3 self-stretch overflow-hidden">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-semibold">Preview</h2>
+                {preview ? (
+                  <span className="text-sm text-muted-foreground">
+                    {preview.rowCount} rows · {preview.executionMs.toFixed(1)}ms
+                  </span>
+                ) : null}
+              </div>
               {preview ? (
-                <Badge variant={preview.cached ? "secondary" : "outline"}>
+                <Badge
+                  variant={preview.cached ? "secondary" : "outline"}
+                  className="h-7 rounded-full px-3 text-xs font-semibold uppercase tracking-wide"
+                >
                   {preview.cached ? "cached" : "fresh"}
                 </Badge>
               ) : null}
@@ -659,15 +722,12 @@ export function BuilderPage() {
             ) : null}
 
             {preview ? (
-              <div className="grid gap-2">
-                <div className="text-sm text-muted-foreground">
-                  {preview.rowCount} rows · {preview.executionMs.toFixed(1)}ms
-                </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                 <div
                   className={
                     draft.chartType === "table"
-                      ? "max-h-[28rem] overflow-auto"
-                      : "h-[22rem]"
+                      ? "flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                      : "flex-1 min-h-0 overflow-hidden"
                   }
                 >
                   <ChartRenderer
@@ -678,7 +738,7 @@ export function BuilderPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-[28rem] items-center justify-center border border-dashed border-border/60 text-sm text-muted-foreground">
+              <div className="flex min-h-0 flex-1 items-center justify-center border border-dashed border-border/60 text-sm text-muted-foreground">
                 Run a preview to render the chart and table output here.
               </div>
             )}
