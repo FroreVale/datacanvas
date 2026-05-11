@@ -1,4 +1,6 @@
+import { DatabaseSync } from "node:sqlite"
 import type {
+  DatasetColumn,
   DatasetSummary,
   QueryConfig,
   QueryPreviewResult,
@@ -8,164 +10,198 @@ import type {
 
 type RecordRow = Record<string, QueryValue>
 
-function normalizeComparable(value: QueryValue) {
-  if (typeof value === "string") {
-    return value
-  }
-
-  if (typeof value === "boolean") {
-    return value ? 1 : 0
-  }
-
-  return value ?? 0
-}
-
-function compareValues(
-  actual: QueryValue,
-  expected: QueryValue,
-  operator: QueryConfig["filters"][number]["operator"],
-) {
-  switch (operator) {
-    case "eq":
-      return actual === expected
-    case "neq":
-      return actual !== expected
-    case "gt":
-      return Number(normalizeComparable(actual)) > Number(expected)
-    case "gte":
-      return Number(normalizeComparable(actual)) >= Number(expected)
-    case "lt":
-      return Number(normalizeComparable(actual)) < Number(expected)
-    case "lte":
-      return Number(normalizeComparable(actual)) <= Number(expected)
-    case "contains":
-      return String(actual ?? "")
-        .toLowerCase()
-        .includes(String(expected ?? "").toLowerCase())
-    default:
-      return false
-  }
-}
-
-function applyFilters(rows: RecordRow[], filters: QueryConfig["filters"]) {
-  if (filters.length === 0) {
-    return rows
-  }
-
-  return rows.filter((row) =>
-    filters.every((filter) =>
-      compareValues(row[filter.column], filter.value, filter.operator),
-    ),
-  )
+function escapeIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`
 }
 
 function metricKey(metricColumn: string, aggregation: string, alias?: string) {
   return alias || `${aggregation}_${metricColumn}`.replace(/[^a-zA-Z0-9_]/g, "_")
 }
 
-function toNumber(value: QueryValue) {
-  const num = Number(value)
-
-  return Number.isFinite(num) ? num : 0
-}
-
-function aggregateRows(rows: RecordRow[], metric: QueryConfig["metrics"][number]) {
-  switch (metric.aggregation) {
-    case "sum":
-      return rows.reduce((sum, row) => sum + toNumber(row[metric.column]), 0)
-    case "avg": {
-      const total = rows.reduce((sum, row) => sum + toNumber(row[metric.column]), 0)
-      return rows.length > 0 ? total / rows.length : 0
-    }
-    case "count":
-      return rows.length
-    case "min":
-      if (rows.length === 0) {
-        return 0
-      }
-      return rows.reduce((min, row) => {
-        const value = toNumber(row[metric.column])
-        return value < min ? value : min
-      }, Number.POSITIVE_INFINITY)
-    case "max":
-      if (rows.length === 0) {
-        return 0
-      }
-      return rows.reduce((max, row) => {
-        const value = toNumber(row[metric.column])
-        return value > max ? value : max
-      }, Number.NEGATIVE_INFINITY)
-    default:
-      return 0
+function normalizeParameter(value: QueryValue): string | number | null {
+  if (value === null) {
+    return null
   }
+
+  if (typeof value === "boolean") {
+    return value ? 1 : 0
+  }
+
+  return value
 }
 
-export function previewQuery(
-  dataset: DatasetSummary,
-  rows: RecordRow[],
+function buildWhereClause(
   query: QueryConfig,
-): QueryPreviewResult {
-  const filteredRows = applyFilters(rows, query.filters)
-  const dimensionKeys = query.dimensions
+  columns: DatasetColumn[],
+  parameters: Array<string | number | null>,
+) {
+  const clauses: string[] = []
+  const columnMap = new Map(columns.map((column) => [column.name, column]))
 
-  const grouped = new Map<string, RecordRow[]>()
+  for (const filter of query.filters) {
+    const column = columnMap.get(filter.column)
+    if (!column) {
+      throw new Error(`Unknown filter column: ${filter.column}`)
+    }
 
-  if (dimensionKeys.length === 0) {
-    grouped.set("__all__", filteredRows)
-  } else {
-    for (const row of filteredRows) {
-      const key = dimensionKeys.map((dimension) => String(row[dimension] ?? "")).join("\u001f")
-      const existing = grouped.get(key)
-      if (existing) {
-        existing.push(row)
-      } else {
-        grouped.set(key, [row])
+    const escapedColumn = escapeIdentifier(filter.column)
+
+    switch (filter.operator) {
+      case "eq":
+        clauses.push(`${escapedColumn} = ?`)
+        parameters.push(normalizeParameter(filter.value))
+        break
+      case "neq":
+        clauses.push(`${escapedColumn} != ?`)
+        parameters.push(normalizeParameter(filter.value))
+        break
+      case "gt":
+      case "gte":
+      case "lt":
+      case "lte": {
+        const comparator =
+          filter.operator === "gt"
+            ? ">"
+            : filter.operator === "gte"
+              ? ">="
+              : filter.operator === "lt"
+                ? "<"
+                : "<="
+        clauses.push(`${escapedColumn} ${comparator} ?`)
+        parameters.push(normalizeParameter(filter.value))
+        break
+      }
+      case "contains":
+        clauses.push(`LOWER(CAST(${escapedColumn} AS TEXT)) LIKE LOWER(?)`)
+        parameters.push(`%${String(filter.value ?? "")}%`)
+        break
+      default:
+        throw new Error(`Unsupported filter operator: ${filter.operator}`)
+    }
+
+    if (column.type === "number" && typeof filter.value === "string") {
+      const numeric = Number(filter.value)
+      if (Number.isFinite(numeric)) {
+        parameters[parameters.length - 1] = numeric
       }
     }
   }
 
-  const previewRows = Array.from(grouped.entries()).map(([groupKey, groupRows]) => {
-    const row: RecordRow = {}
+  return clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""
+}
 
-    if (groupKey === "__all__") {
-      row.__all__ = "All rows"
-    } else {
-      const first = groupRows[0] ?? {}
-      for (const dimension of dimensionKeys) {
-        row[dimension] = first[dimension]
-      }
+function buildSelectClause(query: QueryConfig) {
+  const dimensions = query.dimensions.map((dimension) => escapeIdentifier(dimension))
+  const metricSelects = query.metrics.map((metric) => {
+    const alias = metricKey(metric.column, metric.aggregation, metric.alias)
+
+    switch (metric.aggregation) {
+      case "count":
+        return `COUNT(*) AS ${escapeIdentifier(alias)}`
+      case "sum":
+      case "avg":
+      case "min":
+      case "max":
+        return `${metric.aggregation.toUpperCase()}(CAST(${escapeIdentifier(metric.column)} AS REAL)) AS ${escapeIdentifier(alias)}`
+      default:
+        return `COUNT(*) AS ${escapeIdentifier(alias)}`
     }
-
-    for (const metric of query.metrics) {
-      const key = metricKey(metric.column, metric.aggregation, metric.alias)
-      row[key] = aggregateRows(groupRows, metric)
-    }
-
-    return row
   })
 
-  const columns: PreviewColumn[] = [
-    ...(dimensionKeys.length === 0
-      ? [{ key: "__all__", label: "Group" }]
-      : dimensionKeys.map((dimension) => ({
-          key: dimension,
-          label: dimension.charAt(0).toUpperCase() + dimension.slice(1),
-        }))),
-    ...query.metrics.map((metric) => ({
-      key: metricKey(metric.column, metric.aggregation, metric.alias),
-      label: metric.alias || `${metric.aggregation.toUpperCase()} ${metric.column}`,
-    })),
-  ]
+  const selection = [...dimensions, ...metricSelects]
+  if (selection.length === 0) {
+    return "SELECT *"
+  }
 
-  const limitedRows = typeof query.limit === "number" ? previewRows.slice(0, query.limit) : previewRows
+  return `SELECT ${selection.join(", ")}`
+}
+
+function buildGroupByClause(query: QueryConfig) {
+  if (query.dimensions.length === 0) {
+    return ""
+  }
+
+  return `GROUP BY ${query.dimensions.map(escapeIdentifier).join(", ")}`
+}
+
+function buildOrderByClause(query: QueryConfig) {
+  if (query.dimensions.length === 0) {
+    return ""
+  }
+
+  return `ORDER BY ${query.dimensions.map(escapeIdentifier).join(", ")}`
+}
+
+function buildSqlWithColumns(query: QueryConfig, columns: DatasetColumn[]) {
+  const parameters: Array<string | number | null> = []
+  const whereClause = buildWhereClause(query, columns, parameters)
+  const selectClause = buildSelectClause(query)
+  const groupByClause = buildGroupByClause(query)
+  const orderByClause = buildOrderByClause(query)
+  const limitClause = typeof query.limit === "number" ? `LIMIT ${query.limit}` : ""
 
   return {
-    dataset,
-    rowCount: limitedRows.length,
-    rows: limitedRows,
-    columns,
-    generatedAt: new Date().toISOString(),
+    sql: [
+      selectClause,
+      "FROM dataset_data",
+      whereClause,
+      groupByClause,
+      orderByClause,
+      limitClause,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    parameters,
   }
+}
+
+function columnSqlType(column: DatasetColumn) {
+  switch (column.type) {
+    case "number":
+      return "REAL"
+    case "boolean":
+      return "INTEGER"
+    default:
+      return "TEXT"
+  }
+}
+
+function normalizeRowValue(value: QueryValue, column: DatasetColumn): string | number | null {
+  if (value === null) {
+    return null
+  }
+
+  switch (column.type) {
+    case "number":
+      return Number(value)
+    case "boolean":
+      return value === true || value === 1 ? 1 : 0
+    case "date":
+      return String(value)
+    default:
+      return String(value)
+  }
+}
+
+function createExecutionDatabase(columns: DatasetColumn[], rows: RecordRow[]) {
+  const database = new DatabaseSync(":memory:")
+  const columnDefinitions = columns
+    .map((column) => `${escapeIdentifier(column.name)} ${columnSqlType(column)}`)
+    .join(", ")
+
+  database.exec(`CREATE TABLE dataset_data (${columnDefinitions})`)
+  const placeholders = columns.map(() => "?").join(", ")
+  const insert = database.prepare(
+    `INSERT INTO dataset_data (${columns.map((column) => escapeIdentifier(column.name)).join(", ")}) VALUES (${placeholders})`,
+  )
+
+  for (const record of rows) {
+    const values = columns.map((column) => normalizeRowValue(record[column.name], column)) as Array<
+      string | number | null
+    >
+    insert.run(...(values as any))
+  }
+  return database
 }
 
 export function buildMetricLabel(metric: QueryConfig["metrics"][number]) {
@@ -174,4 +210,56 @@ export function buildMetricLabel(metric: QueryConfig["metrics"][number]) {
 
 export function buildMetricKey(metric: QueryConfig["metrics"][number]) {
   return metricKey(metric.column, metric.aggregation, metric.alias)
+}
+
+export function executeQuery(
+  dataset: DatasetSummary,
+  columns: DatasetColumn[],
+  rows: RecordRow[],
+  query: QueryConfig,
+): Omit<QueryPreviewResult, "generatedAt" | "cached" | "executionMs"> & {
+  executionMs: number
+} {
+  const start = performance.now()
+  const database = createExecutionDatabase(columns, rows)
+  try {
+    const { sql, parameters } = buildSqlWithColumns(query, columns)
+    const statement = database.prepare(sql)
+    const resultRows = statement.all(...parameters) as Record<string, unknown>[]
+
+    const previewRows = resultRows.map((row) => {
+      const record: RecordRow = {}
+      for (const [key, value] of Object.entries(row)) {
+        if (value === null || value === undefined) {
+          record[key] = null
+        } else if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") {
+          record[key] = value
+        } else {
+          record[key] = String(value)
+        }
+      }
+      return record
+    })
+
+    const columnsResult: PreviewColumn[] = [
+      ...(query.dimensions.map((dimension) => ({
+        key: dimension,
+        label: dimension.charAt(0).toUpperCase() + dimension.slice(1),
+      })) as PreviewColumn[]),
+      ...query.metrics.map((metric) => ({
+        key: buildMetricKey(metric),
+        label: buildMetricLabel(metric),
+      })),
+    ]
+
+    return {
+      dataset,
+      rowCount: previewRows.length,
+      rows: previewRows,
+      columns: columnsResult,
+      executionMs: performance.now() - start,
+    }
+  } finally {
+    database.close()
+  }
 }

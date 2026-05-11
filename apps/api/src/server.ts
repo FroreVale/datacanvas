@@ -1,56 +1,141 @@
+import { mkdirSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import Fastify from "fastify"
 import {
-  datasets,
-  getDatasetRows,
-} from "./data/sample-datasets"
-import {
-  buildMetricKey,
-  previewQuery,
-} from "./lib/query-engine"
-import {
+  createChartRequestSchema,
+  datasetUploadRequestSchema,
+  datasetUploadResponseSchema,
   queryConfigSchema,
   queryPreviewErrorSchema,
   queryPreviewResultSchema,
+  removeChartRequestSchema,
+  updateChartRequestSchema,
+  updateDashboardLayoutRequestSchema,
 } from "../../../packages/shared/src/index.ts"
+import { createCache } from "./lib/cache.ts"
+import {
+  buildMetricKey,
+  executeQuery,
+} from "./lib/query-engine.ts"
+import {
+  canCreateCharts,
+  canEditChart,
+  canDeleteChart,
+  canManageDatasets,
+  canUpdateLayout,
+  parseRole,
+} from "./lib/permissions.ts"
+import {
+  createChart,
+  createDatasetFromCsvFile,
+  deleteChart,
+  ensureSeedData,
+  getChartById,
+  getDatasetById,
+  getDatasetColumns,
+  getDatasetRows,
+  getDashboardById,
+  listDashboards,
+  listDatasets,
+  updateChart,
+  updateDashboardLayout,
+} from "./lib/storage.ts"
 
-function parseQuery(body: unknown) {
-  const result = queryConfigSchema.safeParse(body)
+const moduleDir = dirname(fileURLToPath(import.meta.url))
+const apiRoot = join(moduleDir, "..")
+const uploadsDir = join(apiRoot, "uploads")
+const sampleCsvPath = join(apiRoot, "data", "sample_sales_data.csv")
+const previewCache = createCache<ReturnType<typeof queryPreviewResultSchema.parse>>(5 * 60_000)
 
-  if (!result.success) {
+mkdirSync(uploadsDir, { recursive: true })
+ensureSeedData(sampleCsvPath)
+
+function buildQueryError(message: string, issues: { path: (string | number)[]; message: string }[]) {
+  return queryPreviewErrorSchema.parse({
+    message,
+    issues,
+  })
+}
+
+function validateQueryAgainstDataset(query: ReturnType<typeof queryConfigSchema.parse>, datasetId: string) {
+  const dataset = getDatasetById(datasetId)
+  if (!dataset) {
     return {
       ok: false as const,
-      error: queryPreviewErrorSchema.parse({
-        message: "Invalid query configuration",
-        issues: result.error.issues.map((issue) => ({
-          path: issue.path,
-          message: issue.message,
-        })),
-      }),
+      error: buildQueryError(`Unknown dataset: ${datasetId}`, []),
+    }
+  }
+
+  const columns = new Map(dataset.columns.map((column) => [column.name, column]))
+  const issues: { path: (string | number)[]; message: string }[] = []
+
+  for (const dimension of query.dimensions) {
+    if (!columns.has(dimension)) {
+      issues.push({
+        path: ["dimensions"],
+        message: `Unknown dimension column: ${dimension}`,
+      })
+    }
+  }
+
+  for (const metric of query.metrics) {
+    const column = columns.get(metric.column)
+    if (!column) {
+      issues.push({
+        path: ["metrics"],
+        message: `Unknown metric column: ${metric.column}`,
+      })
+      continue
+    }
+
+    if (metric.aggregation !== "count" && column.type !== "number") {
+      issues.push({
+        path: ["metrics"],
+        message: `Aggregation ${metric.aggregation.toUpperCase()} requires a numeric column: ${metric.column}`,
+      })
+    }
+  }
+
+  for (const filter of query.filters) {
+    if (!columns.has(filter.column)) {
+      issues.push({
+        path: ["filters"],
+        message: `Unknown filter column: ${filter.column}`,
+      })
+    }
+  }
+
+  if (issues.length > 0) {
+    return {
+      ok: false as const,
+      error: buildQueryError("Invalid query configuration for dataset", issues),
     }
   }
 
   return {
     ok: true as const,
-    value: result.data,
+    dataset,
   }
 }
 
+function previewKey(datasetId: string, version: number, query: unknown) {
+  return `${datasetId}:${version}:${JSON.stringify(query)}`
+}
+
 export function buildServer() {
-  const app = Fastify({
-    logger: false,
-  })
+  const app = Fastify({ logger: false })
 
   app.get("/api/health", async () => ({ status: "ok" }))
 
   app.get("/api/datasets", async () => ({
-    datasets,
+    datasets: listDatasets(),
   }))
 
   app.get<{ Params: { datasetId: string } }>(
     "/api/datasets/:datasetId",
     async (request, reply) => {
-      const dataset = datasets.find((item) => item.id === request.params.datasetId)
-
+      const dataset = getDatasetById(request.params.datasetId)
       if (!dataset) {
         return reply.code(404).send({ message: "Dataset not found" })
       }
@@ -61,31 +146,274 @@ export function buildServer() {
     },
   )
 
-  app.post("/api/query/preview", async (request, reply) => {
-    const parsed = parseQuery(request.body)
+  app.get("/api/dashboards", async () => ({
+    dashboards: listDashboards(),
+  }))
 
-    if (!parsed.ok) {
-      return reply.code(400).send(parsed.error)
+  app.get<{ Params: { dashboardId: string } }>(
+    "/api/dashboards/:dashboardId",
+    async (request, reply) => {
+      const dashboard = getDashboardById(request.params.dashboardId)
+      if (!dashboard) {
+        return reply.code(404).send({ message: "Dashboard not found" })
+      }
+
+      return {
+        dashboard,
+      }
+    },
+  )
+
+  app.post("/api/datasets/upload", async (request, reply) => {
+    const parsed = datasetUploadRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid dataset upload payload",
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path,
+          message: issue.message,
+        })),
+      })
     }
 
-    const query = parsed.value
-    const dataset = datasets.find((item) => item.id === query.datasetId)
+    const body = parsed.data
+    const role = body.role ? parseRole(body.role) : "editor"
+    if (!canManageDatasets(role)) {
+      return reply.code(403).send({ message: "Only admins and editors can upload datasets" })
+    }
 
-    if (!dataset) {
+    const safeFilename = body.filename.replace(/[^a-zA-Z0-9._-]+/g, "-")
+    const filePath = join(uploadsDir, `${Date.now()}-${safeFilename}`)
+    writeFileSync(filePath, body.csvText, "utf8")
+
+    const dataset = createDatasetFromCsvFile(filePath, body.filename, "upload")
+    const response = datasetUploadResponseSchema.parse({ dataset })
+
+    return reply.code(201).send(response)
+  })
+
+  app.post("/api/query/preview", async (request, reply) => {
+    const parsed = queryConfigSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid query configuration",
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path,
+          message: issue.message,
+        })),
+      })
+    }
+
+    const query = parsed.data
+    const validation = validateQueryAgainstDataset(query, query.datasetId)
+    if (!validation.ok) {
+      return reply.code(400).send(validation.error)
+    }
+
+    const dataset = validation.dataset
+    const rows = getDatasetRows(dataset.id)
+    if (!rows) {
       return reply.code(404).send({
-        message: `Unknown dataset: ${query.datasetId}`,
+        message: `Dataset ${dataset.id} has no rows available`,
         issues: [],
       })
     }
 
-    const preview = previewQuery(dataset, getDatasetRows(dataset.id), query)
-    const parsedPreview = queryPreviewResultSchema.parse(preview)
+    const cached = previewCache.get(previewKey(dataset.id, dataset.version, query))
+    if (cached) {
+      return {
+        preview: {
+          ...cached,
+          cached: true,
+        },
+        metricKeys: query.metrics.map((metric) => buildMetricKey(metric)),
+      }
+    }
+
+    const columns = getDatasetColumns(dataset.id)
+    if (!columns) {
+      return reply.code(404).send({
+        message: `Dataset ${dataset.id} has no columns available`,
+        issues: [],
+      })
+    }
+
+    const result = executeQuery(dataset, columns, rows, query)
+    const preview = queryPreviewResultSchema.parse({
+      ...result,
+      generatedAt: new Date().toISOString(),
+      cached: false,
+    })
+
+    previewCache.set(previewKey(dataset.id, dataset.version, query), preview)
 
     return {
-      preview: parsedPreview,
+      preview,
       metricKeys: query.metrics.map((metric) => buildMetricKey(metric)),
     }
   })
+
+  app.post("/api/charts", async (request, reply) => {
+    const parsed = createChartRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid chart payload",
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path,
+          message: issue.message,
+        })),
+      })
+    }
+
+    const body = parsed.data
+    const role = parseRole(body.role)
+    if (!canCreateCharts(role)) {
+      return reply.code(403).send({ message: "This role cannot create charts" })
+    }
+
+    const chart = createChart({
+      dashboardId: body.dashboardId,
+      datasetId: body.datasetId,
+      title: body.title,
+      chartType: body.chartType,
+      query: body.query,
+      position: body.position,
+      ownerSessionId: body.ownerSessionId,
+    })
+
+    return reply.code(201).send({ chart })
+  })
+
+  app.patch<{ Params: { chartId: string } }>(
+    "/api/charts/:chartId",
+    async (request, reply) => {
+      const parsed = updateChartRequestSchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.code(400).send({
+          message: "Invalid chart update payload",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        })
+      }
+
+      const body = parsed.data
+      const role = parseRole(body.role)
+      const existing = getChartById(request.params.chartId)
+      if (!existing) {
+        return reply.code(404).send({ message: "Chart not found" })
+      }
+
+      if (!canEditChart(role, existing, body.ownerSessionId)) {
+        return reply.code(403).send({ message: "This role cannot update that chart" })
+      }
+
+      try {
+        const chart = updateChart({
+          chartId: request.params.chartId,
+          expectedVersion: body.expectedVersion,
+          role,
+          ownerSessionId: body.ownerSessionId,
+          title: body.title,
+          chartType: body.chartType,
+          query: body.query,
+          position: body.position,
+        })
+
+        if (!chart) {
+          return reply.code(404).send({ message: "Chart not found" })
+        }
+
+        return { chart }
+      } catch (error) {
+        return reply.code(409).send({
+          message: error instanceof Error ? error.message : "Unable to update chart",
+        })
+      }
+    },
+  )
+
+  app.delete<{ Params: { chartId: string } }>(
+    "/api/charts/:chartId",
+    async (request, reply) => {
+      const parsed = removeChartRequestSchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.code(400).send({
+          message: "Invalid chart delete payload",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        })
+      }
+
+      const body = parsed.data
+      const role = parseRole(body.role)
+      const existing = getChartById(request.params.chartId)
+      if (!existing) {
+        return reply.code(404).send({ message: "Chart not found" })
+      }
+
+      if (!canDeleteChart(role, existing, body.ownerSessionId)) {
+        return reply.code(403).send({ message: "This role cannot delete that chart" })
+      }
+
+      try {
+        deleteChart({
+          chartId: request.params.chartId,
+          role,
+          ownerSessionId: body.ownerSessionId,
+        })
+        return reply.code(204).send()
+      } catch (error) {
+        return reply.code(409).send({
+          message: error instanceof Error ? error.message : "Unable to delete chart",
+        })
+      }
+    },
+  )
+
+  app.patch<{ Params: { dashboardId: string } }>(
+    "/api/dashboards/:dashboardId/layout",
+    async (request, reply) => {
+      const parsed = updateDashboardLayoutRequestSchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.code(400).send({
+          message: "Invalid dashboard layout payload",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        })
+      }
+
+      const body = parsed.data
+      const role = parseRole(body.role)
+      if (!canUpdateLayout(role)) {
+        return reply.code(403).send({ message: "This role cannot update dashboard layouts" })
+      }
+
+      try {
+        const dashboard = updateDashboardLayout({
+          dashboardId: request.params.dashboardId,
+          items: body.items,
+          expectedVersion: body.expectedVersion,
+          role,
+        })
+
+        if (!dashboard) {
+          return reply.code(404).send({ message: "Dashboard not found" })
+        }
+
+        return { dashboard }
+      } catch (error) {
+        return reply.code(409).send({
+          message: error instanceof Error ? error.message : "Unable to update dashboard layout",
+        })
+      }
+    },
+  )
 
   return app
 }

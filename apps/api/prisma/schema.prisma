@@ -1,15 +1,11 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -18,24 +14,30 @@ enum Role {
   VIEWER
 }
 
+enum DatasetSourceKind {
+  UPLOAD
+  SEED
+}
+
 model Dataset {
-  id          String   @id
-  name        String
-  description String
-  sourceKind  String
-  version     Int      @default(1)
-  rowCount    Int      @default(0)
-  columnsJson  Json
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  charts      Chart[]
+  id             String           @id
+  name           String
+  description    String
+  sourceFilename  String
+  sourceKind     DatasetSourceKind
+  sourcePath     String
+  version        Int              @default(1)
+  rowCount       Int              @default(0)
+  columnsJson    Json
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  charts         Chart[]
 }
 
 model Dashboard {
-  id          String   @id @default(cuid())
+  id          String   @id
   title       String
-  role        Role     @default(EDITOR)
-  layoutJson  Json
+  description String
   version     Int      @default(1)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -43,15 +45,18 @@ model Dashboard {
 }
 
 model Chart {
-  id           String    @id @default(cuid())
-  dashboardId  String
-  datasetId    String
-  title        String
-  chartType    String
-  queryJson    Json
-  version      Int       @default(1)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  dashboard    Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
-  dataset      Dataset   @relation(fields: [datasetId], references: [id], onDelete: Restrict)
+  id             String    @id
+  dashboardId    String
+  datasetId      String
+  title          String
+  chartType      String
+  queryJson      Json
+  positionJson   Json
+  ownerSessionId String
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  dashboard      Dashboard  @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  dataset        Dataset    @relation(fields: [datasetId], references: [id], onDelete: Restrict)
 }
+

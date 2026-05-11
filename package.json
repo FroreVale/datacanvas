@@ -9,7 +9,7 @@
     "build:api": "pnpm --filter api build",
     "build:web": "pnpm --filter web build",
     "typecheck:api": "pnpm --filter api typecheck",
-    "typecheck:web": "pnpm --filter web build",
+    "typecheck:web": "pnpm --filter web typecheck",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
