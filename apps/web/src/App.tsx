@@ -15,6 +15,7 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/builder" element={<BuilderPage />} />
+          <Route path="/builder/:chartId" element={<BuilderPage />} />
           <Route path="/charts" element={<ChartsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

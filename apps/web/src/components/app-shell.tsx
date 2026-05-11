@@ -22,6 +22,10 @@ const routeLabels: Record<string, string> = {
 }
 
 function getRouteLabel(pathname: string) {
+  if (pathname.startsWith("/builder")) {
+    return "Query Builder"
+  }
+
   return routeLabels[pathname] ?? "Dashboard"
 }
 

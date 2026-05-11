@@ -83,13 +83,7 @@ export function ChartsPage() {
                 <TableRow
                   key={chart.id}
                   className="cursor-pointer"
-                  onClick={() =>
-                    navigate("/builder", {
-                      state: {
-                        chart: chart.chart,
-                      },
-                    })
-                  }
+                  onClick={() => navigate(`/builder/${chart.id}`)}
                 >
                   <TableCell className="font-medium">{chart.title}</TableCell>
                   <TableCell className="capitalize">{chart.chartType}</TableCell>

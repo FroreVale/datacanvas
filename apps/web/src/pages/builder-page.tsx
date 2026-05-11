@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+﻿import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowRight,
@@ -26,8 +26,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ChartRenderer } from "@/components/chart-renderer"
 import {
   aggregationSchema,
-  chartTypeSchema,
-  type Chart,
   type FilterOperator,
   type QueryConfig,
   type TableMode,
@@ -41,13 +39,9 @@ import {
   getTableModeOptions,
   normalizeDraftForDataset,
 } from "@/lib/chart-builder"
-import { useLocation } from "react-router-dom"
+import { useLocation, useParams } from "react-router-dom"
 
 type FieldDialogKind = "dimension" | "metric" | "tableColumn" | null
-type BuilderLocationState = {
-  chartId?: string
-  chart?: Chart
-}
 
 function metricLabel(metric: BuilderMetric) {
   if (metric.column === COUNT_ROWS_METRIC) {
@@ -64,15 +58,15 @@ function formatFilterOperator(operator: FilterOperator) {
     case "eq":
       return "="
     case "neq":
-      return "≠"
+      return "!="
     case "gt":
       return ">"
     case "gte":
-      return "≥"
+      return ">="
     case "lt":
       return "<"
     case "lte":
-      return "≤"
+      return "<="
     default:
       return operator
   }
@@ -93,7 +87,7 @@ function ListRow({
     <button
       type="button"
       onClick={onClick}
-    className={[
+      className={[
         "flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm transition-colors",
         isAdd
           ? "text-muted-foreground hover:bg-muted/40"
@@ -119,7 +113,7 @@ function ListRow({
             }
           }}
         >
-          ×
+          x
         </span>
       ) : isAdd ? (
         <span className="flex size-5 shrink-0 items-center justify-center text-lg leading-none text-muted-foreground">
@@ -198,6 +192,7 @@ function chartQueryToDraft(query?: QueryConfig | null) {
 export function BuilderPage() {
   const queryClient = useQueryClient()
   const location = useLocation()
+  const { chartId } = useParams()
   const role = useAppStore((state) => state.role)
   const activeDatasetId = useAppStore((state) => state.activeDatasetId)
   const activeDashboardId = useAppStore((state) => state.activeDashboardId)
@@ -306,17 +301,13 @@ export function BuilderPage() {
   const preview = previewMutation.data
 
   useEffect(() => {
-    const state = location.state as BuilderLocationState | null
-    const chart = state?.chart
-    const chartId = chart?.id ?? state?.chartId
-
     if (!chartId || hydratedLocationKeyRef.current === location.key) {
       return
     }
 
-    const resolvedChart =
-      chart ?? 
-      dashboardsQuery.data?.flatMap((dashboard) => dashboard.charts).find((entry) => entry.id === chartId)
+    const resolvedChart = dashboardsQuery.data
+      ?.flatMap((dashboard) => dashboard.charts)
+      .find((entry) => entry.id === chartId)
     if (!resolvedChart) {
       return
     }
@@ -349,9 +340,9 @@ export function BuilderPage() {
     setAutoPreviewLocationKey(location.key)
     hydratedLocationKeyRef.current = location.key
   }, [
+    chartId,
     dashboardsQuery.data,
     datasetsQuery.data,
-    location.state,
     location.key,
     previewMutation,
     setActiveDatasetId,
@@ -1089,3 +1080,5 @@ export function BuilderPage() {
     </TooltipProvider>
   )
 }
+
+
