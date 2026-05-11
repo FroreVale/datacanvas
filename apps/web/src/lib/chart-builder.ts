@@ -175,6 +175,9 @@ export function buildQueryConfig(
   },
   datasetId: string,
 ): QueryConfig {
+  const dimensions = draft.chartType === "pie" ? draft.dimensions.slice(0, 1) : draft.dimensions
+  const metrics = draft.chartType === "pie" ? draft.metrics.slice(0, 1) : draft.metrics
+
   if (draft.chartType === "table" && draft.tableMode === "raw") {
     return {
       datasetId,
@@ -208,8 +211,8 @@ export function buildQueryConfig(
     chartType: draft.chartType,
     tableMode: draft.chartType === "table" ? draft.tableMode : undefined,
     tableColumns: [],
-    dimensions: draft.dimensions,
-    metrics: draft.metrics.map(normalizeMetric),
+    dimensions,
+    metrics: metrics.map(normalizeMetric),
     filters: draft.filterValue.trim().length
       ? [
           {
@@ -258,9 +261,11 @@ export function normalizeDraftForDataset(input: {
   const validTableColumns = current.tableColumns.filter((column) =>
     dataset?.columns.some((entry) => entry.name === column),
   )
+  const pieDimensions = validDimensions.slice(0, 1)
+  const pieMetrics = validMetrics.slice(0, 1)
 
   return {
-    tableMode: chartType === "table" ? current.tableMode : getDefaultTableMode(),
+    tableMode: chartType === "table" ? current.tableMode : "summary",
     tableColumns:
       chartType === "table"
         ? validTableColumns.length > 0
@@ -268,15 +273,27 @@ export function normalizeDraftForDataset(input: {
           : preferredTableColumns
         : [],
     dimensions:
-      chartType === "table" ? validDimensions : validDimensions.length > 0 ? validDimensions : preferredDimensions,
+      chartType === "table"
+        ? validDimensions
+        : chartType === "pie"
+          ? pieDimensions.length > 0
+            ? pieDimensions
+            : preferredDimensions.slice(0, 1)
+          : validDimensions.length > 0
+            ? validDimensions
+            : preferredDimensions,
     metrics:
       chartType === "table"
         ? validMetrics.length > 0
           ? validMetrics
           : preferredMetrics
-        : validMetrics.length > 0
-          ? validMetrics
-          : preferredMetrics,
+        : chartType === "pie"
+          ? pieMetrics.length > 0
+            ? pieMetrics
+            : preferredMetrics.slice(0, 1)
+          : validMetrics.length > 0
+            ? validMetrics
+            : preferredMetrics,
     filterColumn:
       dataset?.columns.some((column) => column.name === current.filterColumn)
         ? current.filterColumn

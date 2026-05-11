@@ -130,6 +130,7 @@ function ListBox({
   entries,
   addLabel,
   onAdd,
+  maxItems,
 }: {
   title: string
   required?: boolean
@@ -140,7 +141,10 @@ function ListBox({
   }>
   addLabel: string
   onAdd: () => void
+  maxItems?: number
 }) {
+  const canAddMore = maxItems === undefined || entries.length < maxItems
+
   return (
     <div className="grid gap-2">
       <div className="flex items-center gap-1 text-sm font-medium">
@@ -153,9 +157,11 @@ function ListBox({
             <ListRow value={entry.value} onRemove={entry.onRemove} onClick={onAdd} />
           </div>
         ))}
-        <div className={entries.length > 0 ? "border-t border-border/60" : ""}>
-          <ListRow value={addLabel} onClick={onAdd} isAdd />
-        </div>
+        {canAddMore ? (
+          <div className={entries.length > 0 ? "border-t border-border/60" : ""}>
+            <ListRow value={addLabel} onClick={onAdd} isAdd />
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -363,9 +369,14 @@ export function BuilderPage() {
 
   const applyField = () => {
     if (fieldDialog === "dimension" && newFieldColumn) {
-      if (!draft.dimensions.includes(newFieldColumn)) {
-        setDraft({ dimensions: [...draft.dimensions, newFieldColumn] })
-      }
+      setDraft({
+        dimensions:
+          draft.chartType === "pie"
+            ? [newFieldColumn]
+            : draft.dimensions.includes(newFieldColumn)
+              ? draft.dimensions
+              : [...draft.dimensions, newFieldColumn],
+      })
       setPreviewConfig(null)
       previewMutation.reset()
     }
@@ -375,9 +386,18 @@ export function BuilderPage() {
         newFieldAggregation === "count" && newFieldColumn === COUNT_ROWS_METRIC
           ? { column: COUNT_ROWS_METRIC, aggregation: "count" }
           : { column: newFieldColumn, aggregation: newFieldAggregation }
-      if (!draft.metrics.some((metric) => metric.column === nextMetric.column && metric.aggregation === nextMetric.aggregation)) {
-        setDraft({ metrics: [...draft.metrics, nextMetric] })
-      }
+      setDraft({
+        metrics:
+          draft.chartType === "pie"
+            ? [nextMetric]
+            : draft.metrics.some(
+                (metric) =>
+                  metric.column === nextMetric.column &&
+                  metric.aggregation === nextMetric.aggregation,
+              )
+              ? draft.metrics
+              : [...draft.metrics, nextMetric],
+      })
       setPreviewConfig(null)
       previewMutation.reset()
     }
@@ -456,6 +476,20 @@ export function BuilderPage() {
     { value: "table" as const, label: "Table", icon: Table2 },
   ]
 
+  const changeChartType = (chartType: (typeof chartTypeOptions)[number]["value"]) => {
+    const nextDimensions = chartType === "pie" ? draft.dimensions.slice(0, 1) : draft.dimensions
+    const nextMetrics = chartType === "pie" ? draft.metrics.slice(0, 1) : draft.metrics
+
+    setDraft({
+      chartType,
+      tableMode: chartType === "table" ? draft.tableMode : "summary",
+      dimensions: nextDimensions,
+      metrics: nextMetrics,
+    })
+    setPreviewConfig(null)
+    previewMutation.reset()
+  }
+
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
@@ -516,12 +550,7 @@ export function BuilderPage() {
                               type="button"
                               variant={active ? "secondary" : "outline"}
                               className="h-10 w-10 p-0"
-                              onClick={() =>
-                                setDraft({
-                                  chartType: value,
-                                  tableMode: value === "table" ? draft.tableMode : "raw",
-                                })
-                              }
+                              onClick={() => changeChartType(value)}
                             >
                               <Icon className="size-4" />
                               <span className="sr-only">{label}</span>
@@ -574,6 +603,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
+                      maxItems={draft.chartType === "pie" ? 1 : undefined}
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -586,6 +616,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
+                      maxItems={draft.chartType === "pie" ? 1 : undefined}
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),
@@ -602,6 +633,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
+                      maxItems={draft.chartType === "pie" ? 1 : undefined}
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -614,6 +646,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
+                      maxItems={draft.chartType === "pie" ? 1 : undefined}
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),
