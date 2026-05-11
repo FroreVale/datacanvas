@@ -5,7 +5,6 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -59,4 +58,3 @@ model Chart {
   dashboard      Dashboard  @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
   dataset        Dataset    @relation(fields: [datasetId], references: [id], onDelete: Restrict)
 }
-
