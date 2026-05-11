@@ -1,0 +1,43 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+dist-ssr
+build
+coverage
+*.tsbuildinfo
+
+# Vite / frontend
+apps/web/.vite
+apps/web/dist
+
+# Backend / Prisma
+apps/api/dev.db
+apps/api/dev.db-journal
+apps/api/generated
+apps/api/prisma/migrations
+
+# Environment files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Logs
+*.log
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# Misc
+.cache
