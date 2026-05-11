@@ -72,11 +72,11 @@ import {
 } from "@shared/index"
 
 const chartColors = [
-  "hsl(var(--primary))",
-  "hsl(var(--accent))",
-  "hsl(var(--chart-2, 220 70% 55%))",
-  "hsl(var(--chart-3, 160 60% 45%))",
-  "hsl(var(--chart-4, 280 60% 55%))",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
 ]
 
 function buildQuery(draft: ReturnType<typeof useAppStore.getState>["draft"], datasetId: string): QueryConfig {
@@ -224,10 +224,10 @@ function ChartRenderer({
           <XAxis dataKey={labelKey} tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
           <Tooltip />
-          <Line
+            <Line
             type="monotone"
             dataKey={dataKey}
-            stroke="hsl(var(--primary))"
+            stroke="var(--chart-2)"
             strokeWidth={2}
             dot={false}
           />
@@ -243,7 +243,7 @@ function ChartRenderer({
         <XAxis dataKey={labelKey} tickLine={false} axisLine={false} />
         <YAxis tickLine={false} axisLine={false} />
         <Tooltip />
-        <Bar dataKey={dataKey} fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
+        <Bar dataKey={dataKey} fill="var(--chart-1)" radius={[8, 8, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   )

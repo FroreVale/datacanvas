@@ -404,11 +404,7 @@ export function QueryPlayground() {
                     />
                     <YAxis tickLine={false} axisLine={false} />
                     <Tooltip />
-                    <Bar
-                      dataKey={chartKey}
-                      fill="hsl(var(--primary))"
-                      radius={[8, 8, 0, 0]}
-                    />
+                    <Bar dataKey={chartKey} fill="var(--chart-1)" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
