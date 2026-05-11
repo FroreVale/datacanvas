@@ -1,4 +1,4 @@
-import {
+﻿import {
   Bar,
   BarChart,
   CartesianGrid,
@@ -68,7 +68,36 @@ function labelKey(row: Record<string, unknown>, dimensions: string[]) {
 }
 
 function chartRows(query: QueryConfig, preview: QueryPreviewResult) {
-  return preview.rows.map((row) => ({
+  const sourceRows = [...preview.rows]
+
+  if (query.chartType === "line" && query.dimensions[0]) {
+    const dimension = query.dimensions[0]
+    sourceRows.sort((left, right) => {
+      const leftValue = left[dimension]
+      const rightValue = right[dimension]
+
+      if (leftValue == null && rightValue == null) {
+        return 0
+      }
+      if (leftValue == null) {
+        return 1
+      }
+      if (rightValue == null) {
+        return -1
+      }
+
+      const leftTime = Date.parse(String(leftValue))
+      const rightTime = Date.parse(String(rightValue))
+
+      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) {
+        return leftTime - rightTime
+      }
+
+      return String(leftValue).localeCompare(String(rightValue))
+    })
+  }
+
+  return sourceRows.map((row) => ({
     ...row,
     __label: labelKey(row, query.dimensions),
   }))
@@ -174,6 +203,7 @@ export function ChartRenderer({
               stroke={chartPalette[index % chartPalette.length]}
               strokeWidth={2.25}
               dot={false}
+              connectNulls
             />
           ))}
         </LineChart>
@@ -206,3 +236,5 @@ export function ChartRenderer({
     </ResponsiveContainer>
   )
 }
+
+

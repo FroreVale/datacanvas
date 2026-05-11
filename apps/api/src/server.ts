@@ -9,6 +9,7 @@ import {
   queryConfigSchema,
   queryPreviewErrorSchema,
   queryPreviewResultSchema,
+  removeDatasetRequestSchema,
   removeChartRequestSchema,
   updateChartRequestSchema,
   updateDashboardLayoutRequestSchema,
@@ -26,6 +27,7 @@ import {
 import {
   createChart,
   createDatasetFromCsvFile,
+  deleteDataset,
   deleteChart,
   ensureSeedData,
   getChartById,
@@ -179,6 +181,20 @@ async function validateQueryAgainstDataset(
     }
 
     if (query.chartType === "line") {
+      if (query.dimensions.length !== 1) {
+        issues.push({
+          path: ["dimensions"],
+          message: "Line charts require exactly one time dimension",
+        })
+      }
+
+      if (query.metrics.length !== 1) {
+        issues.push({
+          path: ["metrics"],
+          message: "Line charts require exactly one metric",
+        })
+      }
+
       const dimensionName = query.dimensions[0]
       const selectedColumn = dimensionName ? columns.get(dimensionName) : undefined
       const hasDateColumn = dataset.columns.some((column) => column.type === "date")
@@ -239,6 +255,43 @@ export async function buildServer() {
 
       return {
         dataset,
+      }
+    },
+  )
+
+  app.delete<{ Params: { datasetId: string } }>(
+    "/api/datasets/:datasetId",
+    async (request, reply) => {
+      const parsed = removeDatasetRequestSchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.code(400).send({
+          message: "Invalid dataset delete payload",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        })
+      }
+
+      const body = parsed.data
+      const role = parseRole(body.role)
+
+      try {
+        const result = await deleteDataset({
+          datasetId: request.params.datasetId,
+          role,
+          ownerSessionId: body.ownerSessionId,
+        })
+
+        if (!result) {
+          return reply.code(404).send({ message: "Dataset not found" })
+        }
+
+        return reply.code(204).send()
+      } catch (error) {
+        return reply.code(403).send({
+          message: error instanceof Error ? error.message : "Unable to delete dataset",
+        })
       }
     },
   )

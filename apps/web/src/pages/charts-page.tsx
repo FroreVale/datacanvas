@@ -1,9 +1,10 @@
 import { useMemo } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { fetchDashboards, fetchDatasets } from "@/lib/api"
+import { deleteChart, fetchDashboards, fetchDatasets } from "@/lib/api"
 import { useAppStore } from "@/stores/use-app-store"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Chart } from "@shared/index"
 
@@ -19,7 +20,10 @@ type ChartRow = {
 
 export function ChartsPage() {
   const role = useAppStore((state) => state.role)
+  const ownerSessionId = useAppStore((state) => state.ownerSessionId)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const canDelete = role === "admin"
 
   const dashboardsQuery = useQuery({
     queryKey: ["dashboards"],
@@ -28,6 +32,13 @@ export function ChartsPage() {
   const datasetsQuery = useQuery({
     queryKey: ["datasets"],
     queryFn: fetchDatasets,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteChart,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+    },
   })
 
   const charts = useMemo<ChartRow[]>(() => {
@@ -69,12 +80,16 @@ export function ChartsPage() {
               <TableHead>Dashboard</TableHead>
               <TableHead>Dataset</TableHead>
               <TableHead>Updated</TableHead>
+              {canDelete ? <TableHead className="w-24 text-right">Actions</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
             {charts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={canDelete ? 6 : 5}
+                  className="py-10 text-center text-sm text-muted-foreground"
+                >
                   No charts saved yet.
                 </TableCell>
               </TableRow>
@@ -90,6 +105,26 @@ export function ChartsPage() {
                   <TableCell>{chart.dashboardTitle}</TableCell>
                   <TableCell>{chart.datasetName}</TableCell>
                   <TableCell>{chart.updatedAt}</TableCell>
+                  {canDelete ? (
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-8 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={deleteMutation.isPending}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          deleteMutation.mutate({
+                            chartId: chart.id,
+                            role,
+                            ownerSessionId,
+                          })
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))
             )}

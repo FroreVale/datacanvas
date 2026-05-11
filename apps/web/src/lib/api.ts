@@ -16,6 +16,7 @@ import {
   type QueryPreviewResult,
   type Role,
   createChartRequestSchema,
+  removeDatasetRequestSchema,
   updateChartRequestSchema,
   updateDashboardLayoutRequestSchema,
 } from "@shared/index"
@@ -76,6 +77,20 @@ export async function uploadDataset(input: DatasetUploadRequest): Promise<Datase
     body: JSON.stringify(safeInput),
   })
   return datasetUploadResponseSchema.parse(payload).dataset
+}
+
+export async function deleteDataset(input: {
+  datasetId: string
+  role: Role
+  ownerSessionId: string
+}) {
+  await requestJson(`/datasets/${input.datasetId}`, {
+    method: "DELETE",
+    body: JSON.stringify(removeDatasetRequestSchema.parse({
+      role: input.role,
+      ownerSessionId: input.ownerSessionId,
+    })),
+  })
 }
 
 export async function fetchPreview(query: QueryConfig): Promise<QueryPreviewResult> {

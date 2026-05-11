@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import GridLayout, { type LayoutItem } from "react-grid-layout"
 import "react-grid-layout/css/styles.css"
-import { LayoutGrid, Wand2 } from "lucide-react"
-import { fetchDashboards, fetchDatasets, updateDashboardLayout, deleteChart } from "@/lib/api"
+import { fetchDashboards, updateDashboardLayout, deleteChart } from "@/lib/api"
 import { useAppStore } from "@/stores/use-app-store"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ChartCard } from "@/components/chart-card"
@@ -145,10 +142,6 @@ export function DashboardPage() {
     queryKey: ["dashboards"],
     queryFn: fetchDashboards,
   })
-  const datasetsQuery = useQuery({
-    queryKey: ["datasets"],
-    queryFn: fetchDatasets,
-  })
 
   useEffect(() => {
     const firstDashboard = dashboardsQuery.data?.[0]
@@ -169,72 +162,14 @@ export function DashboardPage() {
   })
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6">
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_320px]">
-        <Card className="overflow-hidden border-border/70 bg-card/85 shadow-sm backdrop-blur">
-          <div className="bg-gradient-to-br from-primary/12 via-transparent to-chart-2/10">
-            <CardHeader className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="space-y-2">
-                  <Badge variant="secondary" className="w-fit">
-                    Dashboard
-                  </Badge>
-                  <CardTitle className="text-3xl">
-                    {activeDashboard?.title ?? "Dashboard"}
-                  </CardTitle>
-                  <CardDescription className="max-w-2xl text-base">
-                    A living dashboard surface for saved charts. Build queries in the dedicated
-                    builder, then return here to arrange and compare the results.
-                  </CardDescription>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="outline" className="gap-2">
-                    <Link to="/builder">
-                      <Wand2 className="size-4" />
-                      Open builder
-                    </Link>
-                  </Button>
-                  <Button asChild className="gap-2">
-                    <Link to="/charts">
-                      <LayoutGrid className="size-4" />
-                      Saved charts
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-          </div>
-
-          <CardContent className="grid gap-4 md:grid-cols-3">
-            <StatCard label="Datasets" value={datasetsQuery.data?.length ?? 0} />
-            <StatCard label="Charts" value={activeDashboard?.charts.length ?? 0} />
-            <StatCard
-              label="Canvas"
-              value={activeDashboard?.version ?? 0}
-              description="Versioned layout"
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/70 bg-card/85 shadow-sm backdrop-blur">
-          <CardHeader>
-            <CardTitle className="text-lg">What this page owns</CardTitle>
-            <CardDescription>
-              Overview, canvas layout, and saved chart arrangement only.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 text-sm text-muted-foreground">
-            <div className="rounded-2xl border border-border/60 bg-background/70 p-3">
-              Drag and resize the charts here. Build query logic elsewhere.
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/70 p-3">
-              Go to the builder to define dimensions, metrics, and filters.
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/70 p-3">
-              Use the charts page when you want to review or delete saved cards.
-            </div>
-          </CardContent>
-        </Card>
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <section className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {activeDashboard?.title ?? "Dashboard"}
+        </h1>
+        <Badge variant="outline" className="capitalize">
+          {role}
+        </Badge>
       </section>
 
       <div className="min-h-0 flex-1 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
@@ -261,27 +196,5 @@ export function DashboardPage() {
         )}
       </div>
     </div>
-  )
-}
-
-function StatCard({
-  label,
-  value,
-  description,
-}: {
-  label: string
-  value: number
-  description?: string
-}) {
-  return (
-    <Card className="border-border/60 bg-background/70">
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        <p className="text-3xl font-semibold tracking-tight">{value}</p>
-        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      </CardContent>
-    </Card>
   )
 }

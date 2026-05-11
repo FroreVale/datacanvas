@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -403,6 +403,49 @@ export async function deleteChart(input: {
     where: { id: input.chartId },
   })
   return true
+}
+
+export async function deleteDataset(input: {
+  datasetId: string
+  role: Role
+  ownerSessionId: string
+}) {
+  roleSchema.parse(input.role)
+
+  const existing = await getDatasetById(input.datasetId)
+  if (!existing) {
+    return false
+  }
+
+  if (input.role !== "admin") {
+    throw new Error("Only admins can delete datasets")
+  }
+
+  const charts = await prisma.chart.findMany({
+    where: { datasetId: input.datasetId },
+    select: { id: true },
+  })
+
+  const sourcePath = await getDatasetSourcePath(input.datasetId)
+
+  await prisma.$transaction([
+    prisma.chart.deleteMany({
+      where: { datasetId: input.datasetId },
+    }),
+    prisma.dataset.delete({
+      where: { id: input.datasetId },
+    }),
+  ])
+
+  if (sourcePath) {
+    try {
+      unlinkSync(sourcePath)
+    } catch {
+      // Ignore missing files. The database record is the source of truth.
+    }
+  }
+
+  return { chartCount: charts.length }
 }
 
 export async function updateDashboardLayout(input: {

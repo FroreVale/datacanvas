@@ -581,8 +581,14 @@ export function BuilderPage() {
   ]
 
   const changeChartType = (chartType: (typeof chartTypeOptions)[number]["value"]) => {
-    const nextDimensions = chartType === "pie" || chartType === "bar" ? draft.dimensions.slice(0, 1) : draft.dimensions
-    const nextMetrics = chartType === "pie" || chartType === "bar" ? draft.metrics.slice(0, 1) : draft.metrics
+    const nextDimensions =
+      chartType === "pie" || chartType === "bar" || chartType === "line"
+        ? draft.dimensions.slice(0, 1)
+        : draft.dimensions
+    const nextMetrics =
+      chartType === "pie" || chartType === "bar" || chartType === "line"
+        ? draft.metrics.slice(0, 1)
+        : draft.metrics
 
     setDraft({
       chartType,
@@ -707,7 +713,13 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
-                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
+                      maxItems={
+                        draft.chartType === "pie" ||
+                        draft.chartType === "bar" ||
+                        draft.chartType === "line"
+                          ? 1
+                          : undefined
+                      }
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -720,7 +732,13 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
-                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
+                      maxItems={
+                        draft.chartType === "pie" ||
+                        draft.chartType === "bar" ||
+                        draft.chartType === "line"
+                          ? 1
+                          : undefined
+                      }
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),
@@ -737,7 +755,13 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
-                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
+                      maxItems={
+                        draft.chartType === "pie" ||
+                        draft.chartType === "bar" ||
+                        draft.chartType === "line"
+                          ? 1
+                          : undefined
+                      }
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -750,7 +774,13 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
-                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
+                      maxItems={
+                        draft.chartType === "pie" ||
+                        draft.chartType === "bar" ||
+                        draft.chartType === "line"
+                          ? 1
+                          : undefined
+                      }
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),

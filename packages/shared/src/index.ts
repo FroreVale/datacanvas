@@ -225,3 +225,9 @@ export const removeChartRequestSchema = z.strictObject({
   ownerSessionId: z.string().min(1),
 })
 export type RemoveChartRequest = z.infer<typeof removeChartRequestSchema>
+
+export const removeDatasetRequestSchema = z.strictObject({
+  role: roleSchema,
+  ownerSessionId: z.string().min(1),
+})
+export type RemoveDatasetRequest = z.infer<typeof removeDatasetRequestSchema>

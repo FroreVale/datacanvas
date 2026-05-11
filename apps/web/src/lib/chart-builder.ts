@@ -36,9 +36,9 @@ export function getChartRequirements(
       return {
         dimensionRequired: true,
         metricRequired: true,
-        dimensionLabel: "Group by",
-        metricLabel: "Metrics",
-        description: "Line charts work best with a time axis and one or more metrics.",
+        dimensionLabel: "Time",
+        metricLabel: "Metric",
+        description: "Line charts should use one ordered time dimension and one metric.",
       }
     case "pie":
       return {
@@ -79,11 +79,12 @@ export function getDimensionOptions(dataset?: DatasetSummary, chartType: ChartTy
   }
 
   if (chartType === "line") {
-    return [
-      ...columns.filter((column) => column.type === "date"),
-      ...columns.filter((column) => column.type === "string"),
-      ...columns.filter((column) => column.type === "boolean"),
-    ]
+    const dateColumns = columns.filter((column) => column.type === "date")
+    if (dateColumns.length > 0) {
+      return dateColumns
+    }
+
+    return columns.filter((column) => column.type === "string")
   }
 
   return [
@@ -182,7 +183,8 @@ export function buildQueryConfig(
   },
   datasetId: string,
 ): QueryConfig {
-  const singleSeriesChart = draft.chartType === "pie" || draft.chartType === "bar"
+  const singleSeriesChart =
+    draft.chartType === "pie" || draft.chartType === "bar" || draft.chartType === "line"
   const dimensions = singleSeriesChart ? draft.dimensions.slice(0, 1) : draft.dimensions
   const metrics = singleSeriesChart ? draft.metrics.slice(0, 1) : draft.metrics
   const filters =
@@ -271,8 +273,8 @@ export function normalizeDraftForDataset(input: {
   const validTableColumns = current.tableColumns.filter((column) =>
     dataset?.columns.some((entry) => entry.name === column),
   )
-  const pieDimensions = validDimensions.slice(0, 1)
-  const pieMetrics = validMetrics.slice(0, 1)
+  const singleDimension = validDimensions.slice(0, 1)
+  const singleMetric = validMetrics.slice(0, 1)
 
   return {
     tableMode: chartType === "table" ? current.tableMode : "summary",
@@ -285,9 +287,9 @@ export function normalizeDraftForDataset(input: {
     dimensions:
       chartType === "table"
         ? validDimensions
-        : chartType === "pie" || chartType === "bar"
-          ? pieDimensions.length > 0
-            ? pieDimensions
+        : chartType === "pie" || chartType === "bar" || chartType === "line"
+          ? singleDimension.length > 0
+            ? singleDimension
             : preferredDimensions.slice(0, 1)
           : validDimensions.length > 0
             ? validDimensions
@@ -297,9 +299,9 @@ export function normalizeDraftForDataset(input: {
         ? validMetrics.length > 0
           ? validMetrics
           : preferredMetrics
-        : chartType === "pie" || chartType === "bar"
-          ? pieMetrics.length > 0
-            ? pieMetrics
+        : chartType === "pie" || chartType === "bar" || chartType === "line"
+          ? singleMetric.length > 0
+            ? singleMetric
             : preferredMetrics.slice(0, 1)
           : validMetrics.length > 0
             ? validMetrics

@@ -1,8 +1,8 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Database, FileUp, Plus } from "lucide-react"
+import { Database, Plus } from "lucide-react"
 import { useNavigate } from "react-router-dom"
-import { fetchDatasets, uploadDataset } from "@/lib/api"
+import { deleteDataset, fetchDatasets, uploadDataset } from "@/lib/api"
 import { useAppStore } from "@/stores/use-app-store"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -17,6 +17,7 @@ export function DatasetsPage() {
   const role = useAppStore((state) => state.role)
   const ownerSessionId = useAppStore((state) => state.ownerSessionId)
   const canMutate = role !== "viewer"
+  const canDelete = role === "admin"
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [fileName, setFileName] = useState("")
   const [csvText, setCsvText] = useState("")
@@ -36,6 +37,24 @@ export function DatasetsPage() {
       setCsvText("")
       if (fileInputRef.current) {
         fileInputRef.current.value = ""
+      }
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteDataset,
+    onSuccess: async (_, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["datasets"] })
+      await queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+
+      const remaining = datasetsQuery.data?.filter((dataset) => dataset.id !== variables.datasetId) ?? []
+      const nextDataset = remaining[0]
+      if (nextDataset) {
+        setActiveDatasetId(nextDataset.id)
+        setDraftFromDataset(nextDataset)
+      } else {
+        setActiveDatasetId(null)
+        setDraftFromDataset(undefined)
       }
     },
   })
@@ -108,6 +127,7 @@ export function DatasetsPage() {
               <TableHead>Rows</TableHead>
               <TableHead>Columns</TableHead>
               <TableHead>Status</TableHead>
+              {canDelete ? <TableHead className="w-24 text-right">Actions</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -130,6 +150,26 @@ export function DatasetsPage() {
                     Ready
                   </Badge>
                 </TableCell>
+                {canDelete ? (
+                  <TableCell className="text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      disabled={deleteMutation.isPending}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        deleteMutation.mutate({
+                          datasetId: dataset.id,
+                          role,
+                          ownerSessionId,
+                        })
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </TableCell>
+                ) : null}
               </TableRow>
             ))}
           </TableBody>
