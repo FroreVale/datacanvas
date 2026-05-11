@@ -123,6 +123,8 @@ export type QueryPreviewError = z.infer<typeof queryPreviewErrorSchema>
 
 export const chartPositionSchema = z.strictObject({
   order: z.number().int().nonnegative(),
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
   width: z.number().int().positive().max(12),
   height: z.number().int().positive().max(12),
 })
@@ -194,6 +196,8 @@ export type UpdateChartRequest = z.infer<typeof updateChartRequestSchema>
 export const updateDashboardLayoutItemSchema = z.strictObject({
   chartId: z.string().min(1),
   order: z.number().int().nonnegative(),
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
   width: z.number().int().positive().max(12),
   height: z.number().int().positive().max(12),
 })
@@ -215,4 +219,3 @@ export const removeChartRequestSchema = z.strictObject({
   ownerSessionId: z.string().min(1),
 })
 export type RemoveChartRequest = z.infer<typeof removeChartRequestSchema>
-

@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite"
+import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api"
 import type {
   DatasetColumn,
   DatasetSummary,
@@ -9,6 +9,13 @@ import type {
 } from "../../../../packages/shared/src/index.ts"
 
 type RecordRow = Record<string, QueryValue>
+
+let duckdbInstancePromise: Promise<DuckDBInstance> | null = null
+
+function getDuckDBInstance() {
+  duckdbInstancePromise ??= DuckDBInstance.create(":memory:")
+  return duckdbInstancePromise
+}
 
 function escapeIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`
@@ -67,12 +74,13 @@ function buildWhereClause(
               : filter.operator === "lt"
                 ? "<"
                 : "<="
+
         clauses.push(`${escapedColumn} ${comparator} ?`)
         parameters.push(normalizeParameter(filter.value))
         break
       }
       case "contains":
-        clauses.push(`LOWER(CAST(${escapedColumn} AS TEXT)) LIKE LOWER(?)`)
+        clauses.push(`LOWER(CAST(${escapedColumn} AS VARCHAR)) LIKE LOWER(?)`)
         parameters.push(`%${String(filter.value ?? "")}%`)
         break
       default:
@@ -102,7 +110,7 @@ function buildSelectClause(query: QueryConfig) {
       case "avg":
       case "min":
       case "max":
-        return `${metric.aggregation.toUpperCase()}(CAST(${escapeIdentifier(metric.column)} AS REAL)) AS ${escapeIdentifier(alias)}`
+        return `${metric.aggregation.toUpperCase()}(CAST(${escapeIdentifier(metric.column)} AS DOUBLE)) AS ${escapeIdentifier(alias)}`
       default:
         return `COUNT(*) AS ${escapeIdentifier(alias)}`
     }
@@ -142,6 +150,7 @@ function buildSqlWithColumns(query: QueryConfig, columns: DatasetColumn[]) {
 
   return {
     sql: [
+      "WITH dataset_data AS (SELECT * FROM read_csv_auto(?, header = true))",
       selectClause,
       "FROM dataset_data",
       whereClause,
@@ -155,53 +164,17 @@ function buildSqlWithColumns(query: QueryConfig, columns: DatasetColumn[]) {
   }
 }
 
-function columnSqlType(column: DatasetColumn) {
-  switch (column.type) {
-    case "number":
-      return "REAL"
-    case "boolean":
-      return "INTEGER"
-    default:
-      return "TEXT"
-  }
-}
-
-function normalizeRowValue(value: QueryValue, column: DatasetColumn): string | number | null {
-  if (value === null) {
-    return null
-  }
-
-  switch (column.type) {
-    case "number":
-      return Number(value)
-    case "boolean":
-      return value === true || value === 1 ? 1 : 0
-    case "date":
-      return String(value)
-    default:
-      return String(value)
-  }
-}
-
-function createExecutionDatabase(columns: DatasetColumn[], rows: RecordRow[]) {
-  const database = new DatabaseSync(":memory:")
-  const columnDefinitions = columns
-    .map((column) => `${escapeIdentifier(column.name)} ${columnSqlType(column)}`)
-    .join(", ")
-
-  database.exec(`CREATE TABLE dataset_data (${columnDefinitions})`)
-  const placeholders = columns.map(() => "?").join(", ")
-  const insert = database.prepare(
-    `INSERT INTO dataset_data (${columns.map((column) => escapeIdentifier(column.name)).join(", ")}) VALUES (${placeholders})`,
-  )
-
-  for (const record of rows) {
-    const values = columns.map((column) => normalizeRowValue(record[column.name], column)) as Array<
-      string | number | null
-    >
-    insert.run(...(values as any))
-  }
-  return database
+function buildPreviewColumns(query: QueryConfig): PreviewColumn[] {
+  return [
+    ...(query.dimensions.map((dimension) => ({
+      key: dimension,
+      label: dimension.charAt(0).toUpperCase() + dimension.slice(1),
+    })) as PreviewColumn[]),
+    ...query.metrics.map((metric) => ({
+      key: buildMetricKey(metric),
+      label: buildMetricLabel(metric),
+    })),
+  ]
 }
 
 export function buildMetricLabel(metric: QueryConfig["metrics"][number]) {
@@ -212,27 +185,34 @@ export function buildMetricKey(metric: QueryConfig["metrics"][number]) {
   return metricKey(metric.column, metric.aggregation, metric.alias)
 }
 
-export function executeQuery(
+export async function executeQuery(
   dataset: DatasetSummary,
   columns: DatasetColumn[],
-  rows: RecordRow[],
+  sourcePath: string,
   query: QueryConfig,
-): Omit<QueryPreviewResult, "generatedAt" | "cached" | "executionMs"> & {
+): Promise<Omit<QueryPreviewResult, "generatedAt" | "cached" | "executionMs"> & {
   executionMs: number
-} {
+}> {
   const start = performance.now()
-  const database = createExecutionDatabase(columns, rows)
+  const instance = await getDuckDBInstance()
+  const connection = await DuckDBConnection.create(instance)
+
   try {
     const { sql, parameters } = buildSqlWithColumns(query, columns)
-    const statement = database.prepare(sql)
-    const resultRows = statement.all(...parameters) as Record<string, unknown>[]
+    const reader = await connection.runAndReadAll(sql, [sourcePath, ...parameters])
+    await reader.readAll()
+    const resultRows = reader.getRowObjectsJson() as Record<string, unknown>[]
 
     const previewRows = resultRows.map((row) => {
       const record: RecordRow = {}
       for (const [key, value] of Object.entries(row)) {
         if (value === null || value === undefined) {
           record[key] = null
-        } else if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") {
+        } else if (
+          typeof value === "number" ||
+          typeof value === "string" ||
+          typeof value === "boolean"
+        ) {
           record[key] = value
         } else {
           record[key] = String(value)
@@ -241,25 +221,14 @@ export function executeQuery(
       return record
     })
 
-    const columnsResult: PreviewColumn[] = [
-      ...(query.dimensions.map((dimension) => ({
-        key: dimension,
-        label: dimension.charAt(0).toUpperCase() + dimension.slice(1),
-      })) as PreviewColumn[]),
-      ...query.metrics.map((metric) => ({
-        key: buildMetricKey(metric),
-        label: buildMetricLabel(metric),
-      })),
-    ]
-
     return {
       dataset,
       rowCount: previewRows.length,
       rows: previewRows,
-      columns: columnsResult,
+      columns: buildPreviewColumns(query),
       executionMs: performance.now() - start,
     }
   } finally {
-    database.close()
+    connection.disconnectSync()
   }
 }

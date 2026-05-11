@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import GridLayout, { type LayoutItem } from "react-grid-layout"
+import "react-grid-layout/css/styles.css"
 import {
   Alert,
   AlertDescription,
@@ -118,6 +120,29 @@ function chartLabelKey(query: QueryConfig) {
   return query.dimensions[0] ?? "__all__"
 }
 
+function chartToLayout(chart: Chart): LayoutItem {
+  return {
+    i: chart.id,
+    x: chart.position.x,
+    y: chart.position.y,
+    w: chart.position.width,
+    h: chart.position.height,
+    minW: 3,
+    minH: 4,
+  }
+}
+
+function layoutToLayoutItems(layout: readonly LayoutItem[]) {
+  return layout.map((item, index) => ({
+    chartId: item.i,
+    order: index,
+    x: item.x ?? 0,
+    y: item.y ?? 0,
+    width: item.w,
+    height: item.h,
+  }))
+}
+
 function datasetColumnOptions(dataset?: DatasetSummary) {
   return {
     dimensions: dataset?.columns.filter((column) => column.type === "string" || column.type === "date") ?? [],
@@ -128,19 +153,6 @@ function datasetColumnOptions(dataset?: DatasetSummary) {
 
 function isRoleDisabled(role: Role) {
   return role === "viewer"
-}
-
-function chartSizeClass(width: number) {
-  if (width >= 8) return "xl:col-span-8"
-  if (width >= 6) return "xl:col-span-6"
-  if (width >= 4) return "xl:col-span-4"
-  return "xl:col-span-3"
-}
-
-function heightClass(height: number) {
-  if (height >= 6) return "min-h-[28rem]"
-  if (height >= 4) return "min-h-[22rem]"
-  return "min-h-[16rem]"
 }
 
 function ChartRenderer({
@@ -277,9 +289,7 @@ function ChartCard({
   return (
     <Card
       className={cn(
-        "border-border/60 bg-card/80 shadow-sm backdrop-blur",
-        chartSizeClass(chart.position.width),
-        heightClass(chart.position.height),
+        "flex h-full flex-col border-border/60 bg-card/80 shadow-sm backdrop-blur",
       )}
     >
       <CardHeader className="flex flex-row items-start justify-between gap-3">
@@ -294,7 +304,7 @@ function ChartCard({
           <Badge variant="secondary">{chart.chartType}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="h-full min-h-0">
+      <CardContent className="flex-1 min-h-0">
         {previewQuery.isLoading ? (
           <div className="flex h-full min-h-[12rem] items-center justify-center">
             <Skeleton className="h-8 w-32" />
@@ -438,6 +448,8 @@ export function DashboardStudio() {
   const [uploadFileName, setUploadFileName] = useState<string>("")
   const [uploadCsvText, setUploadCsvText] = useState<string>("")
   const [previewConfig, setPreviewConfig] = useState<QueryConfig | null>(null)
+  const dashboardGridRef = useRef<HTMLDivElement | null>(null)
+  const [dashboardGridWidth, setDashboardGridWidth] = useState(0)
 
   const previewQuery = queryPreviewMutation.data
   const queryConfig = useMemo(
@@ -448,6 +460,23 @@ export function DashboardStudio() {
     !!queryConfig &&
     !!previewConfig &&
     JSON.stringify(queryConfig) === JSON.stringify(previewConfig)
+
+  useEffect(() => {
+    const element = dashboardGridRef.current
+    if (!element) {
+      return
+    }
+
+    const updateWidth = () => setDashboardGridWidth(element.clientWidth)
+    updateWidth()
+
+    const observer = new ResizeObserver(() => {
+      updateWidth()
+    })
+    observer.observe(element)
+
+    return () => observer.disconnect()
+  }, [])
 
   const previewHandler = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -463,6 +492,10 @@ export function DashboardStudio() {
       return
     }
 
+    const nextOrder = activeDashboard.charts.length
+    const nextWidth = draft.chartType === "table" ? 8 : 6
+    const nextHeight = draft.chartType === "table" ? 5 : 4
+
     await createChartMutation.mutateAsync({
       dashboardId: activeDashboard.id,
       datasetId: activeDataset.id,
@@ -470,12 +503,27 @@ export function DashboardStudio() {
       chartType: draft.chartType,
       query: queryConfig,
       position: {
-        order: activeDashboard.charts.length,
-        width: draft.chartType === "table" ? 8 : 6,
-        height: draft.chartType === "table" ? 5 : 4,
+        order: nextOrder,
+        x: (nextOrder % 2) * 6,
+        y: Math.floor(nextOrder / 2) * 4,
+        width: nextWidth,
+        height: nextHeight,
       },
       role,
       ownerSessionId,
+    })
+  }
+
+  const persistLayout = async (layout: readonly LayoutItem[]) => {
+    if (!activeDashboard) {
+      return
+    }
+
+    await layoutMutation.mutateAsync({
+      dashboardId: activeDashboard.id,
+      expectedVersion: activeDashboard.version,
+      role,
+      items: layoutToLayoutItems(layout),
     })
   }
 
@@ -484,30 +532,19 @@ export function DashboardStudio() {
       return
     }
 
-    const nextItems = activeDashboard.charts.map((chart) => {
-      if (chart.id === chartId) {
-        return {
-          chartId: chart.id,
-          order: Math.max(0, chart.position.order + delta),
-          width: chart.position.width,
-          height: chart.position.height,
-        }
+    const layout = activeDashboard.charts.map(chartToLayout)
+    const nextLayout = layout.map((item) => {
+      if (item.i !== chartId) {
+        return item
       }
 
       return {
-        chartId: chart.id,
-        order: chart.position.order,
-        width: chart.position.width,
-        height: chart.position.height,
+        ...item,
+        x: Math.max(0, Math.min(12 - item.w, item.x + delta)),
       }
     })
 
-    await layoutMutation.mutateAsync({
-      dashboardId: activeDashboard.id,
-      expectedVersion: activeDashboard.version,
-      role,
-      items: nextItems,
-    })
+    await persistLayout(nextLayout)
   }
 
   const resizeChart = async (chartId: string, delta: number) => {
@@ -515,30 +552,19 @@ export function DashboardStudio() {
       return
     }
 
-    const nextItems = activeDashboard.charts.map((chart) => {
-      if (chart.id === chartId) {
-        return {
-          chartId: chart.id,
-          order: chart.position.order,
-          width: Math.min(12, Math.max(3, chart.position.width + delta)),
-          height: chart.position.height,
-        }
+    const layout = activeDashboard.charts.map(chartToLayout)
+    const nextLayout = layout.map((item) => {
+      if (item.i !== chartId) {
+        return item
       }
 
       return {
-        chartId: chart.id,
-        order: chart.position.order,
-        width: chart.position.width,
-        height: chart.position.height,
+        ...item,
+        w: Math.min(12, Math.max(3, item.w + delta)),
       }
     })
 
-    await layoutMutation.mutateAsync({
-      dashboardId: activeDashboard.id,
-      expectedVersion: activeDashboard.version,
-      role,
-      items: nextItems,
-    })
+    await persistLayout(nextLayout)
   }
 
   const removeChart = async (chartId: string) => {
@@ -612,18 +638,48 @@ export function DashboardStudio() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-12">
-          {activeDashboard?.charts.map((chart) => (
-            <ChartCard
-              key={chart.id}
-              chart={chart}
-              role={role}
-              ownerSessionId={ownerSessionId}
-              onMove={moveChart}
-              onResize={resizeChart}
-              onDelete={removeChart}
-            />
-          ))}
+        <div ref={dashboardGridRef} className="rounded-2xl border border-border/60 bg-background/40 p-3">
+          {dashboardGridWidth > 0 && activeDashboard?.charts.length ? (
+            <GridLayout
+              width={dashboardGridWidth}
+              layout={activeDashboard.charts.map(chartToLayout)}
+              gridConfig={{ cols: 12, rowHeight: 72 }}
+              autoSize
+              onDragStop={(layout) => {
+                void persistLayout(layout)
+              }}
+              onResizeStop={(layout) => {
+                void persistLayout(layout)
+              }}
+            >
+              {activeDashboard.charts.map((chart) => (
+                <div key={chart.id} className="h-full">
+                  <ChartCard
+                    chart={chart}
+                    role={role}
+                    ownerSessionId={ownerSessionId}
+                    onMove={moveChart}
+                    onResize={resizeChart}
+                    onDelete={removeChart}
+                  />
+                </div>
+              ))}
+            </GridLayout>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {activeDashboard?.charts.map((chart) => (
+                <ChartCard
+                  key={chart.id}
+                  chart={chart}
+                  role={role}
+                  ownerSessionId={ownerSessionId}
+                  onMove={moveChart}
+                  onResize={resizeChart}
+                  onDelete={removeChart}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <Card className="border-border/60 bg-card/80 shadow-sm backdrop-blur">

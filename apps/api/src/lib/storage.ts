@@ -1,8 +1,12 @@
-import { DatabaseSync } from "node:sqlite"
 import { randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  type Chart as PrismaChart,
+  type Dashboard as PrismaDashboard,
+  type Dataset as PrismaDataset,
+} from "../../generated/prisma/index.js"
 import {
   chartPositionSchema,
   chartSchema,
@@ -22,208 +26,138 @@ import {
   type Role,
 } from "../../../../packages/shared/src/index.ts"
 import { inferCsvDataset } from "./csv.ts"
-
-type DatasetRow = {
-  id: string
-  name: string
-  description: string
-  sourceFilename: string
-  sourceKind: string
-  sourcePath: string
-  version: number
-  rowCount: number
-  columnsJson: string
-  createdAt: string
-  updatedAt: string
-}
-
-type DashboardRow = {
-  id: string
-  title: string
-  description: string
-  version: number
-  createdAt: string
-  updatedAt: string
-}
-
-type ChartRow = {
-  id: string
-  dashboardId: string
-  datasetId: string
-  title: string
-  chartType: string
-  queryJson: string
-  positionJson: string
-  version: number
-  ownerSessionId: string
-  createdAt: string
-  updatedAt: string
-}
+import { prisma } from "./prisma.ts"
 
 const apiRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
-const dbPath = join(apiRoot, "dev.db")
 const uploadsDir = join(apiRoot, "uploads")
-const db = new DatabaseSync(dbPath)
-mkdirSync(dirname(dbPath), { recursive: true })
 mkdirSync(uploadsDir, { recursive: true })
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-
-  CREATE TABLE IF NOT EXISTS datasets (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL,
-    sourceFilename TEXT NOT NULL,
-    sourceKind TEXT NOT NULL,
-    sourcePath TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    rowCount INTEGER NOT NULL,
-    columnsJson TEXT NOT NULL,
-    createdAt TEXT NOT NULL,
-    updatedAt TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS dashboards (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    createdAt TEXT NOT NULL,
-    updatedAt TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS charts (
-    id TEXT PRIMARY KEY,
-    dashboardId TEXT NOT NULL,
-    datasetId TEXT NOT NULL,
-    title TEXT NOT NULL,
-    chartType TEXT NOT NULL,
-    queryJson TEXT NOT NULL,
-    positionJson TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    ownerSessionId TEXT NOT NULL,
-    createdAt TEXT NOT NULL,
-    updatedAt TEXT NOT NULL,
-    FOREIGN KEY (dashboardId) REFERENCES dashboards(id) ON DELETE CASCADE,
-    FOREIGN KEY (datasetId) REFERENCES datasets(id) ON DELETE RESTRICT
-  );
-`)
-
-function now() {
-  return new Date().toISOString()
+function toSourceKind(sourceKind: string): "upload" | "seed" {
+  return sourceKind.toLowerCase() === "seed" ? "seed" : "upload"
 }
 
-function parseDatasetRow(row: DatasetRow): DatasetSummary {
+function parseDatasetRow(row: PrismaDataset): DatasetSummary {
   return datasetSummarySchema.parse({
     id: row.id,
     name: row.name,
     description: row.description,
     sourceFilename: row.sourceFilename,
-    sourceKind: row.sourceKind,
+    sourceKind: toSourceKind(row.sourceKind),
     version: row.version,
     rowCount: row.rowCount,
-    columns: JSON.parse(row.columnsJson) as unknown,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    columns: row.columnsJson as DatasetSummary["columns"],
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   })
 }
 
-function parseDashboardRow(row: DashboardRow, charts: Chart[]): Dashboard {
+function parseDashboardRow(row: PrismaDashboard, charts: Chart[]): Dashboard {
   return dashboardSchema.parse({
     id: row.id,
     title: row.title,
     description: row.description,
     version: row.version,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
     charts,
   })
 }
 
-function parseChartRow(row: ChartRow): Chart {
+function parseChartRow(row: PrismaChart): Chart {
+  const rawPosition = row.positionJson as Partial<ChartPosition> & {
+    order?: number
+    x?: number
+    y?: number
+  }
+  const order = Number(rawPosition.order ?? 0)
+  const x = Number(rawPosition.x ?? order % 12)
+  const y = Number(rawPosition.y ?? Math.floor(order / 2) * 4)
+
   return chartSchema.parse({
     id: row.id,
     dashboardId: row.dashboardId,
     datasetId: row.datasetId,
     title: row.title,
     chartType: row.chartType,
-    query: JSON.parse(row.queryJson) as unknown,
-    position: JSON.parse(row.positionJson) as unknown,
+    query: row.queryJson as QueryConfig,
+    position: {
+      order,
+      x,
+      y,
+      width: Number(rawPosition.width ?? 6),
+      height: Number(rawPosition.height ?? 4),
+    },
     version: row.version,
     ownerSessionId: row.ownerSessionId,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   })
 }
 
-function readDatasetRow(datasetId: string) {
-  return db
-    .prepare("SELECT * FROM datasets WHERE id = ?")
-    .get(datasetId) as DatasetRow | undefined
+async function readChartRowsByDashboard(dashboardId: string) {
+  const rows = await prisma.chart.findMany({
+    where: { dashboardId },
+    orderBy: { createdAt: "asc" },
+  })
+
+  return rows.sort((left, right) => {
+    const leftPosition = left.positionJson as Partial<ChartPosition>
+    const rightPosition = right.positionJson as Partial<ChartPosition>
+    const leftY = Number(leftPosition.y ?? 0)
+    const rightY = Number(rightPosition.y ?? 0)
+    if (leftY !== rightY) {
+      return leftY - rightY
+    }
+    return Number(leftPosition.x ?? 0) - Number(rightPosition.x ?? 0)
+  })
 }
 
-function readChartRowsByDashboard(dashboardId: string) {
-  return db
-    .prepare("SELECT * FROM charts WHERE dashboardId = ? ORDER BY json_extract(positionJson, '$.order') ASC, createdAt ASC")
-    .all(dashboardId) as ChartRow[]
+async function readDatasetRow(datasetId: string) {
+  return prisma.dataset.findUnique({
+    where: { id: datasetId },
+  })
 }
 
-function writeDatasetRecord(input: {
+async function writeDatasetRecord(input: {
   id?: string
   name: string
   description: string
   sourceFilename: string
   sourceKind: "upload" | "seed"
   sourcePath: string
-  columns: unknown
+  columns: DatasetSummary["columns"]
   rowCount: number
 }) {
-  const id = input.id ?? randomUUID()
-  const timestamp = now()
-  db.prepare(
-    `
-      INSERT INTO datasets (id, name, description, sourceFilename, sourceKind, sourcePath, version, rowCount, columnsJson, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run(
-    id,
-    input.name,
-    input.description,
-    input.sourceFilename,
-    input.sourceKind,
-    input.sourcePath,
-    1,
-    input.rowCount,
-    JSON.stringify(input.columns),
-    timestamp,
-    timestamp,
-  )
-
-  const record = readDatasetRow(id)
-  if (!record) {
-    throw new Error("Failed to create dataset record")
-  }
+  const record = await prisma.dataset.create({
+    data: {
+      id: input.id ?? randomUUID(),
+      name: input.name,
+      description: input.description,
+      sourceFilename: input.sourceFilename,
+      sourceKind: input.sourceKind === "seed" ? "SEED" : "UPLOAD",
+      sourcePath: input.sourcePath,
+      rowCount: input.rowCount,
+      columnsJson: input.columns,
+    },
+  })
 
   return parseDatasetRow(record)
 }
 
-function writeDashboardRecord(input: {
+async function writeDashboardRecord(input: {
   id?: string
   title: string
   description: string
 }) {
-  const id = input.id ?? randomUUID()
-  const timestamp = now()
-  db.prepare(
-    `
-      INSERT INTO dashboards (id, title, description, version, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `,
-  ).run(id, input.title, input.description, 1, timestamp, timestamp)
+  const record = await prisma.dashboard.create({
+    data: {
+      id: input.id ?? randomUUID(),
+      title: input.title,
+      description: input.description,
+    },
+  })
 
-  const dashboard = getDashboardById(id)
+  const dashboard = await getDashboardById(record.id)
   if (!dashboard) {
     throw new Error("Failed to create dashboard record")
   }
@@ -231,7 +165,7 @@ function writeDashboardRecord(input: {
   return dashboard
 }
 
-function writeChartRecord(input: {
+async function writeChartRecord(input: {
   id?: string
   dashboardId: string
   datasetId: string
@@ -241,103 +175,96 @@ function writeChartRecord(input: {
   position: ChartPosition
   ownerSessionId: string
 }) {
-  const id = input.id ?? randomUUID()
-  const timestamp = now()
-  db.prepare(
-    `
-      INSERT INTO charts (id, dashboardId, datasetId, title, chartType, queryJson, positionJson, version, ownerSessionId, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run(
-    id,
-    input.dashboardId,
-    input.datasetId,
-    input.title,
-    input.chartType,
-    JSON.stringify(input.query),
-    JSON.stringify(input.position),
-    1,
-    input.ownerSessionId,
-    timestamp,
-    timestamp,
-  )
+  const record = await prisma.chart.create({
+    data: {
+      id: input.id ?? randomUUID(),
+      dashboardId: input.dashboardId,
+      datasetId: input.datasetId,
+      title: input.title,
+      chartType: input.chartType,
+      queryJson: input.query,
+    positionJson: input.position,
+      ownerSessionId: input.ownerSessionId,
+    },
+  })
 
-  const row = db.prepare("SELECT * FROM charts WHERE id = ?").get(id) as
-    | ChartRow
-    | undefined
-
-  if (!row) {
-    throw new Error("Failed to create chart")
-  }
-
-  return parseChartRow(row)
+  return parseChartRow(record)
 }
 
-export function listDatasets(): DatasetSummary[] {
-  const rows = db.prepare("SELECT * FROM datasets ORDER BY createdAt DESC").all() as DatasetRow[]
+export async function listDatasets(): Promise<DatasetSummary[]> {
+  const rows = await prisma.dataset.findMany({
+    orderBy: { createdAt: "desc" },
+  })
   return rows.map(parseDatasetRow)
 }
 
-export function getDatasetById(datasetId: string): DatasetSummary | null {
-  const row = readDatasetRow(datasetId)
+export async function getDatasetById(datasetId: string): Promise<DatasetSummary | null> {
+  const row = await readDatasetRow(datasetId)
   return row ? parseDatasetRow(row) : null
 }
 
-export function getDatasetDetailById(datasetId: string): DatasetDetail | null {
-  const row = readDatasetRow(datasetId)
+export async function getDatasetDetailById(datasetId: string): Promise<DatasetDetail | null> {
+  const row = await readDatasetRow(datasetId)
   return row ? datasetDetailSchema.parse(parseDatasetRow(row)) : null
 }
 
-export function getDatasetSourcePath(datasetId: string) {
-  const row = readDatasetRow(datasetId)
+export async function getDatasetSourcePath(datasetId: string) {
+  const row = await readDatasetRow(datasetId)
   return row?.sourcePath ?? null
 }
 
-export function getDatasetColumns(datasetId: string) {
-  const row = readDatasetRow(datasetId)
+export async function getDatasetColumns(datasetId: string) {
+  const row = await readDatasetRow(datasetId)
   if (!row) {
     return null
   }
 
-  return JSON.parse(row.columnsJson) as DatasetDetail["columns"]
+  return row.columnsJson as DatasetDetail["columns"]
 }
 
-export function listDashboards(): Dashboard[] {
-  const rows = db.prepare("SELECT * FROM dashboards ORDER BY createdAt DESC").all() as DashboardRow[]
-  return rows.map((row) => {
-    const charts = readChartRowsByDashboard(row.id).map(parseChartRow)
-    return parseDashboardRow(row, charts)
+export async function listDashboards(): Promise<Dashboard[]> {
+  const rows = await prisma.dashboard.findMany({
+    orderBy: { createdAt: "desc" },
   })
+
+  const dashboards = await Promise.all(
+    rows.map(async (row) => {
+      const charts = (await readChartRowsByDashboard(row.id)).map(parseChartRow)
+      return parseDashboardRow(row, charts)
+    }),
+  )
+
+  return dashboards
 }
 
-export function getDashboardById(dashboardId: string): Dashboard | null {
-  const row = db
-    .prepare("SELECT * FROM dashboards WHERE id = ?")
-    .get(dashboardId) as DashboardRow | undefined
+export async function getDashboardById(dashboardId: string): Promise<Dashboard | null> {
+  const row = await prisma.dashboard.findUnique({
+    where: { id: dashboardId },
+  })
 
   if (!row) {
     return null
   }
 
-  const charts = readChartRowsByDashboard(dashboardId).map(parseChartRow)
+  const charts = (await readChartRowsByDashboard(dashboardId)).map(parseChartRow)
   return parseDashboardRow(row, charts)
 }
 
-export function listCharts() {
-  return db
-    .prepare("SELECT * FROM charts ORDER BY createdAt DESC")
-    .all() as ChartRow[]
+export async function listCharts() {
+  return prisma.chart.findMany({
+    orderBy: { createdAt: "desc" },
+  })
 }
 
-export function getChartById(chartId: string): Chart | null {
-  const row = db.prepare("SELECT * FROM charts WHERE id = ?").get(chartId) as
-    | ChartRow
-    | undefined
+export async function getChartById(chartId: string): Promise<Chart | null> {
+  const row = await prisma.chart.findUnique({
+    where: { id: chartId },
+  })
 
   return row ? parseChartRow(row) : null
 }
 
-export function createDatasetFromCsvFile(
+export async function createDatasetFromCsvFile(
   sourcePath: string,
   sourceFilename: string,
   sourceKind: "upload" | "seed",
@@ -358,13 +285,15 @@ export function createDatasetFromCsvFile(
   })
 }
 
-export function createDatasetFromCsvText(input: {
+export async function createDatasetFromCsvText(input: {
   filename: string
   csvText: string
   sourceKind: "upload" | "seed"
   sourcePath: string
 }) {
   const parsed = inferCsvDataset(input.filename, input.csvText)
+
+  writeFileSync(input.sourcePath, input.csvText, "utf8")
 
   return writeDatasetRecord({
     name: parsed.name,
@@ -377,14 +306,14 @@ export function createDatasetFromCsvText(input: {
   })
 }
 
-export function createDashboard(input: {
+export async function createDashboard(input: {
   title: string
   description: string
 }) {
   return writeDashboardRecord(input)
 }
 
-export function createChart(input: {
+export async function createChart(input: {
   dashboardId: string
   datasetId: string
   title: string
@@ -399,7 +328,7 @@ export function createChart(input: {
   return writeChartRecord(input)
 }
 
-export function updateChart(input: {
+export async function updateChart(input: {
   chartId: string
   title?: string
   chartType?: ChartType
@@ -411,7 +340,7 @@ export function updateChart(input: {
 }) {
   roleSchema.parse(input.role)
 
-  const existing = getChartById(input.chartId)
+  const existing = await getChartById(input.chartId)
   if (!existing) {
     return null
   }
@@ -424,10 +353,7 @@ export function updateChart(input: {
     throw new Error("Viewers cannot edit charts")
   }
 
-  if (
-    input.role === "editor" &&
-    existing.ownerSessionId !== input.ownerSessionId
-  ) {
+  if (input.role === "editor" && existing.ownerSessionId !== input.ownerSessionId) {
     throw new Error("Editors can only edit their own charts")
   }
 
@@ -439,33 +365,28 @@ export function updateChart(input: {
     version: existing.version + 1,
   }
 
-  db.prepare(
-    `
-      UPDATE charts
-      SET title = ?, chartType = ?, queryJson = ?, positionJson = ?, version = ?, updatedAt = ?
-      WHERE id = ?
-    `,
-  ).run(
-    next.title,
-    next.chartType,
-    JSON.stringify(next.query),
-    JSON.stringify(next.position),
-    next.version,
-    now(),
-    input.chartId,
-  )
+  const record = await prisma.chart.update({
+    where: { id: input.chartId },
+    data: {
+      title: next.title,
+      chartType: next.chartType,
+      queryJson: next.query,
+      positionJson: next.position,
+      version: next.version,
+    },
+  })
 
-  return getChartById(input.chartId)
+  return parseChartRow(record)
 }
 
-export function deleteChart(input: {
+export async function deleteChart(input: {
   chartId: string
   role: Role
   ownerSessionId: string
 }) {
   roleSchema.parse(input.role)
 
-  const existing = getChartById(input.chartId)
+  const existing = await getChartById(input.chartId)
   if (!existing) {
     return false
   }
@@ -474,22 +395,23 @@ export function deleteChart(input: {
     throw new Error("Viewers cannot delete charts")
   }
 
-  if (
-    input.role === "editor" &&
-    existing.ownerSessionId !== input.ownerSessionId
-  ) {
+  if (input.role === "editor" && existing.ownerSessionId !== input.ownerSessionId) {
     throw new Error("Editors can only delete their own charts")
   }
 
-  db.prepare("DELETE FROM charts WHERE id = ?").run(input.chartId)
+  await prisma.chart.delete({
+    where: { id: input.chartId },
+  })
   return true
 }
 
-export function updateDashboardLayout(input: {
+export async function updateDashboardLayout(input: {
   dashboardId: string
   items: Array<{
     chartId: string
     order: number
+    x: number
+    y: number
     width: number
     height: number
   }>
@@ -498,7 +420,7 @@ export function updateDashboardLayout(input: {
 }) {
   roleSchema.parse(input.role)
 
-  const dashboard = getDashboardById(input.dashboardId)
+  const dashboard = await getDashboardById(input.dashboardId)
   if (!dashboard) {
     throw new Error("Dashboard not found")
   }
@@ -512,61 +434,65 @@ export function updateDashboardLayout(input: {
   }
 
   const existingCharts = new Map(dashboard.charts.map((chart) => [chart.id, chart]))
-
   for (const item of input.items) {
     if (!existingCharts.has(item.chartId)) {
       throw new Error(`Unknown chart in layout: ${item.chartId}`)
     }
-    db.prepare(
-      `UPDATE charts SET positionJson = ?, updatedAt = ?, version = version + 1 WHERE id = ?`,
-    ).run(
-      JSON.stringify({
-        order: item.order,
-        width: item.width,
-        height: item.height,
-      }),
-      now(),
-      item.chartId,
-    )
   }
 
-  db.prepare(
-    `UPDATE dashboards SET version = version + 1, updatedAt = ? WHERE id = ?`,
-  ).run(now(), input.dashboardId)
+  await prisma.$transaction([
+    ...input.items.map((item) =>
+      prisma.chart.update({
+        where: { id: item.chartId },
+        data: {
+      positionJson: {
+          order: item.order,
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+          },
+          version: {
+            increment: 1,
+          },
+        },
+      }),
+    ),
+    prisma.dashboard.update({
+      where: { id: input.dashboardId },
+      data: {
+        version: {
+          increment: 1,
+        },
+      },
+    }),
+  ])
 
   return getDashboardById(input.dashboardId)
 }
 
-export function getDatasetRows(datasetId: string) {
-  const sourcePath = getDatasetSourcePath(datasetId)
-  if (!sourcePath) {
-    return null
+export async function ensureSeedData(sampleFilePath: string) {
+  const [datasetCount, dashboardCount] = await Promise.all([
+    prisma.dataset.count(),
+    prisma.dashboard.count(),
+  ])
+
+  let dataset = (await listDatasets())[0] ?? null
+
+  if (datasetCount === 0) {
+    dataset = await createDatasetFromCsvFile(sampleFilePath, "sample_sales_data.csv", "seed")
   }
 
-  const fileContents = readFileSync(sourcePath, "utf8")
-  return inferCsvDataset(`${datasetId}.csv`, fileContents).rows
-}
+  let dashboard = (await listDashboards())[0] ?? null
 
-export function ensureSeedData(sampleFilePath: string) {
-  const hasDataset = listDatasets().length > 0
-  const hasDashboard = listDashboards().length > 0
-
-  let dataset = listDatasets()[0] ?? null
-
-  if (!hasDataset) {
-    dataset = createDatasetFromCsvFile(sampleFilePath, "sample_sales_data.csv", "seed")
-  }
-
-  let dashboard = listDashboards()[0] ?? null
-
-  if (!hasDashboard && dataset) {
-    dashboard = createDashboard({
+  if (dashboardCount === 0 && dataset) {
+    dashboard = await createDashboard({
       title: "Revenue Overview",
       description: "Seed dashboard based on the bundled sales CSV.",
     })
 
     if (dashboard) {
-      createChart({
+      await createChart({
         dashboardId: dashboard.id,
         datasetId: dataset.id,
         title: "Revenue by Product",
@@ -584,11 +510,11 @@ export function ensureSeedData(sampleFilePath: string) {
           filters: [],
           limit: 10,
         },
-        position: { order: 0, width: 6, height: 4 },
+        position: { order: 0, x: 0, y: 0, width: 6, height: 4 },
         ownerSessionId: "seed-session",
       })
 
-      createChart({
+      await createChart({
         dashboardId: dashboard.id,
         datasetId: dataset.id,
         title: "Revenue Over Time",
@@ -606,11 +532,11 @@ export function ensureSeedData(sampleFilePath: string) {
           filters: [],
           limit: 20,
         },
-        position: { order: 1, width: 6, height: 4 },
+        position: { order: 1, x: 6, y: 0, width: 6, height: 4 },
         ownerSessionId: "seed-session",
       })
 
-      createChart({
+      await createChart({
         dashboardId: dashboard.id,
         datasetId: dataset.id,
         title: "Regional Mix",
@@ -628,26 +554,26 @@ export function ensureSeedData(sampleFilePath: string) {
           filters: [],
           limit: 10,
         },
-        position: { order: 2, width: 4, height: 4 },
+        position: { order: 2, x: 0, y: 4, width: 4, height: 4 },
         ownerSessionId: "seed-session",
       })
     }
   }
 
   return {
-    dataset: dataset ?? listDatasets()[0] ?? null,
-    dashboard: dashboard ?? listDashboards()[0] ?? null,
+    dataset: dataset ?? (await listDatasets())[0] ?? null,
+    dashboard: dashboard ?? (await listDashboards())[0] ?? null,
   }
 }
 
-export function datasetSnapshot(datasetId: string) {
-  const summary = getDatasetById(datasetId)
+export async function datasetSnapshot(datasetId: string) {
+  const summary = await getDatasetById(datasetId)
   if (!summary) {
     return null
   }
 
   return {
     summary,
-    sourcePath: getDatasetSourcePath(datasetId),
+    sourcePath: await getDatasetSourcePath(datasetId),
   }
 }

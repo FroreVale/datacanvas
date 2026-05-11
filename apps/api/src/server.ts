@@ -14,10 +14,7 @@ import {
   updateDashboardLayoutRequestSchema,
 } from "../../../packages/shared/src/index.ts"
 import { createCache } from "./lib/cache.ts"
-import {
-  buildMetricKey,
-  executeQuery,
-} from "./lib/query-engine.ts"
+import { buildMetricKey, executeQuery } from "./lib/query-engine.ts"
 import {
   canCreateCharts,
   canEditChart,
@@ -34,7 +31,7 @@ import {
   getChartById,
   getDatasetById,
   getDatasetColumns,
-  getDatasetRows,
+  getDatasetSourcePath,
   getDashboardById,
   listDashboards,
   listDatasets,
@@ -49,17 +46,22 @@ const sampleCsvPath = join(apiRoot, "data", "sample_sales_data.csv")
 const previewCache = createCache<ReturnType<typeof queryPreviewResultSchema.parse>>(5 * 60_000)
 
 mkdirSync(uploadsDir, { recursive: true })
-ensureSeedData(sampleCsvPath)
 
-function buildQueryError(message: string, issues: { path: (string | number)[]; message: string }[]) {
+function buildQueryError(
+  message: string,
+  issues: { path: (string | number)[]; message: string }[],
+) {
   return queryPreviewErrorSchema.parse({
     message,
     issues,
   })
 }
 
-function validateQueryAgainstDataset(query: ReturnType<typeof queryConfigSchema.parse>, datasetId: string) {
-  const dataset = getDatasetById(datasetId)
+async function validateQueryAgainstDataset(
+  query: ReturnType<typeof queryConfigSchema.parse>,
+  datasetId: string,
+) {
+  const dataset = await getDatasetById(datasetId)
   if (!dataset) {
     return {
       ok: false as const,
@@ -123,19 +125,21 @@ function previewKey(datasetId: string, version: number, query: unknown) {
   return `${datasetId}:${version}:${JSON.stringify(query)}`
 }
 
-export function buildServer() {
+export async function buildServer() {
   const app = Fastify({ logger: false })
+
+  await ensureSeedData(sampleCsvPath)
 
   app.get("/api/health", async () => ({ status: "ok" }))
 
   app.get("/api/datasets", async () => ({
-    datasets: listDatasets(),
+    datasets: await listDatasets(),
   }))
 
   app.get<{ Params: { datasetId: string } }>(
     "/api/datasets/:datasetId",
     async (request, reply) => {
-      const dataset = getDatasetById(request.params.datasetId)
+      const dataset = await getDatasetById(request.params.datasetId)
       if (!dataset) {
         return reply.code(404).send({ message: "Dataset not found" })
       }
@@ -147,13 +151,13 @@ export function buildServer() {
   )
 
   app.get("/api/dashboards", async () => ({
-    dashboards: listDashboards(),
+    dashboards: await listDashboards(),
   }))
 
   app.get<{ Params: { dashboardId: string } }>(
     "/api/dashboards/:dashboardId",
     async (request, reply) => {
-      const dashboard = getDashboardById(request.params.dashboardId)
+      const dashboard = await getDashboardById(request.params.dashboardId)
       if (!dashboard) {
         return reply.code(404).send({ message: "Dashboard not found" })
       }
@@ -186,7 +190,7 @@ export function buildServer() {
     const filePath = join(uploadsDir, `${Date.now()}-${safeFilename}`)
     writeFileSync(filePath, body.csvText, "utf8")
 
-    const dataset = createDatasetFromCsvFile(filePath, body.filename, "upload")
+    const dataset = await createDatasetFromCsvFile(filePath, body.filename, "upload")
     const response = datasetUploadResponseSchema.parse({ dataset })
 
     return reply.code(201).send(response)
@@ -205,16 +209,18 @@ export function buildServer() {
     }
 
     const query = parsed.data
-    const validation = validateQueryAgainstDataset(query, query.datasetId)
+    const validation = await validateQueryAgainstDataset(query, query.datasetId)
     if (!validation.ok) {
       return reply.code(400).send(validation.error)
     }
 
     const dataset = validation.dataset
-    const rows = getDatasetRows(dataset.id)
-    if (!rows) {
+    const sourcePath = await getDatasetSourcePath(dataset.id)
+    const columns = await getDatasetColumns(dataset.id)
+
+    if (!sourcePath || !columns) {
       return reply.code(404).send({
-        message: `Dataset ${dataset.id} has no rows available`,
+        message: `Dataset ${dataset.id} is missing source data`,
         issues: [],
       })
     }
@@ -230,15 +236,7 @@ export function buildServer() {
       }
     }
 
-    const columns = getDatasetColumns(dataset.id)
-    if (!columns) {
-      return reply.code(404).send({
-        message: `Dataset ${dataset.id} has no columns available`,
-        issues: [],
-      })
-    }
-
-    const result = executeQuery(dataset, columns, rows, query)
+    const result = await executeQuery(dataset, columns, sourcePath, query)
     const preview = queryPreviewResultSchema.parse({
       ...result,
       generatedAt: new Date().toISOString(),
@@ -271,7 +269,7 @@ export function buildServer() {
       return reply.code(403).send({ message: "This role cannot create charts" })
     }
 
-    const chart = createChart({
+    const chart = await createChart({
       dashboardId: body.dashboardId,
       datasetId: body.datasetId,
       title: body.title,
@@ -300,7 +298,7 @@ export function buildServer() {
 
       const body = parsed.data
       const role = parseRole(body.role)
-      const existing = getChartById(request.params.chartId)
+      const existing = await getChartById(request.params.chartId)
       if (!existing) {
         return reply.code(404).send({ message: "Chart not found" })
       }
@@ -310,7 +308,7 @@ export function buildServer() {
       }
 
       try {
-        const chart = updateChart({
+        const chart = await updateChart({
           chartId: request.params.chartId,
           expectedVersion: body.expectedVersion,
           role,
@@ -350,7 +348,7 @@ export function buildServer() {
 
       const body = parsed.data
       const role = parseRole(body.role)
-      const existing = getChartById(request.params.chartId)
+      const existing = await getChartById(request.params.chartId)
       if (!existing) {
         return reply.code(404).send({ message: "Chart not found" })
       }
@@ -360,7 +358,7 @@ export function buildServer() {
       }
 
       try {
-        deleteChart({
+        await deleteChart({
           chartId: request.params.chartId,
           role,
           ownerSessionId: body.ownerSessionId,
@@ -395,7 +393,7 @@ export function buildServer() {
       }
 
       try {
-        const dashboard = updateDashboardLayout({
+        const dashboard = await updateDashboardLayout({
           dashboardId: request.params.dashboardId,
           items: body.items,
           expectedVersion: body.expectedVersion,
@@ -418,4 +416,4 @@ export function buildServer() {
   return app
 }
 
-export type AppServer = ReturnType<typeof buildServer>
+export type AppServer = Awaited<ReturnType<typeof buildServer>>

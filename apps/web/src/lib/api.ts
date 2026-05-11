@@ -141,6 +141,8 @@ export async function updateDashboardLayout(input: {
   items: Array<{
     chartId: string
     order: number
+    x: number
+    y: number
     width: number
     height: number
   }>
@@ -155,4 +157,3 @@ export async function updateDashboardLayout(input: {
   })
   return dashboardSchema.parse((payload as { dashboard?: unknown }).dashboard)
 }
-
