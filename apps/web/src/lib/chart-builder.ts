@@ -1,13 +1,17 @@
 import {
   type Aggregation,
   type ChartType,
-  type DatasetColumn,
   type DatasetSummary,
   type QueryConfig,
   type TableMode,
 } from "@shared/index"
 
 export const COUNT_ROWS_METRIC = "__count_rows__"
+
+type MetricDraft = {
+  column: string
+  aggregation: Aggregation
+}
 
 type ChartRequirements = {
   dimensionRequired: boolean
@@ -26,9 +30,9 @@ export function getChartRequirements(
       return {
         dimensionRequired: true,
         metricRequired: true,
-        dimensionLabel: "Date / time",
-        metricLabel: "Metric",
-        description: "Line charts work best with a time axis and one metric.",
+        dimensionLabel: "Group by",
+        metricLabel: "Metrics",
+        description: "Line charts work best with a time axis and one or more metrics.",
       }
     case "pie":
       return {
@@ -43,10 +47,10 @@ export function getChartRequirements(
         dimensionRequired: tableMode === "summary",
         metricRequired: tableMode === "summary",
         dimensionLabel: tableMode === "summary" ? "Group by" : "Columns",
-        metricLabel: tableMode === "summary" ? "Metric" : "Metrics",
+        metricLabel: tableMode === "summary" ? "Metrics" : "Columns",
         description:
           tableMode === "summary"
-            ? "Summary tables group rows and aggregate one or more measures."
+            ? "Summary tables group rows and aggregate measures."
             : "Raw tables show selected columns with filters and limits.",
       }
     case "bar":
@@ -54,9 +58,9 @@ export function getChartRequirements(
       return {
         dimensionRequired: true,
         metricRequired: true,
-        dimensionLabel: "Category",
-        metricLabel: "Metric",
-        description: "Bar charts compare categories against one aggregated measure.",
+        dimensionLabel: "Group by",
+        metricLabel: "Metrics",
+        description: "Bar charts compare grouped categories against one or more metrics.",
       }
   }
 }
@@ -102,7 +106,7 @@ export function getMetricOptions(dataset?: DatasetSummary) {
 export function getTableModeOptions() {
   return [
     { value: "raw" as const, label: "Raw rows" },
-    { value: "summary" as const, label: "Summary" },
+    { value: "summary" as const, label: "Aggregate" },
   ]
 }
 
@@ -110,17 +114,30 @@ export function getDefaultTableMode(): TableMode {
   return "raw"
 }
 
-export function getDefaultDimension(
+export function getDefaultDimension(dataset: DatasetSummary | undefined, chartType: ChartType) {
+  const options = getDimensionOptions(dataset, chartType)
+  return options[0]?.name ?? "product"
+}
+
+export function getDefaultDimensions(
   dataset: DatasetSummary | undefined,
   chartType: ChartType,
 ) {
-  const options = getDimensionOptions(dataset, chartType)
-  return options[0]?.name ?? "product"
+  return [getDefaultDimension(dataset, chartType)]
 }
 
 export function getDefaultMetric(dataset: DatasetSummary | undefined) {
   const numeric = dataset?.columns.find((column) => column.type === "number")
   return numeric?.name ?? COUNT_ROWS_METRIC
+}
+
+export function getDefaultMetrics(dataset: DatasetSummary | undefined) {
+  return [
+    {
+      column: getDefaultMetric(dataset),
+      aggregation: getDefaultAggregation(getDefaultMetric(dataset)),
+    },
+  ]
 }
 
 export function getDefaultAggregation(metric: string): Aggregation {
@@ -131,14 +148,26 @@ export function getDefaultTableColumns(dataset: DatasetSummary | undefined) {
   return (dataset?.columns ?? []).slice(0, 3).map((column) => column.name)
 }
 
+function normalizeMetric(metric: MetricDraft) {
+  const column = metric.column === COUNT_ROWS_METRIC ? "*" : metric.column
+  const aggregation = metric.column === COUNT_ROWS_METRIC ? "count" : metric.aggregation
+  return {
+    column,
+    aggregation,
+    alias:
+      aggregation === "count" && column === "*"
+        ? "count_rows"
+        : `${aggregation}_${column}`.replace(/[^a-zA-Z0-9_]/g, "_"),
+  }
+}
+
 export function buildQueryConfig(
   draft: {
     chartType: ChartType
     tableMode: TableMode
     tableColumns: string[]
-    dimension: string
-    metric: string
-    aggregation: Aggregation
+    dimensions: string[]
+    metrics: MetricDraft[]
     filterColumn: string
     filterOperator: string
     filterValue: string
@@ -146,9 +175,6 @@ export function buildQueryConfig(
   },
   datasetId: string,
 ): QueryConfig {
-  const metricColumn = draft.metric === COUNT_ROWS_METRIC ? "*" : draft.metric
-  const aggregation = draft.metric === COUNT_ROWS_METRIC ? "count" : draft.aggregation
-
   if (draft.chartType === "table" && draft.tableMode === "raw") {
     return {
       datasetId,
@@ -161,7 +187,14 @@ export function buildQueryConfig(
         ? [
             {
               column: draft.filterColumn,
-              operator: draft.filterOperator as "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "contains",
+              operator: draft.filterOperator as
+                | "eq"
+                | "neq"
+                | "gt"
+                | "gte"
+                | "lt"
+                | "lte"
+                | "contains",
               value: draft.filterValue.trim(),
             },
           ]
@@ -175,34 +208,20 @@ export function buildQueryConfig(
     chartType: draft.chartType,
     tableMode: draft.chartType === "table" ? draft.tableMode : undefined,
     tableColumns: [],
-    dimensions: draft.dimension ? [draft.dimension] : [],
-    metrics:
-      draft.chartType === "table" && draft.tableMode === "summary"
-        ? [
-            {
-              column: metricColumn,
-              aggregation,
-              alias:
-                aggregation === "count" && metricColumn === "*"
-                  ? "count_rows"
-                  : `${aggregation}_${metricColumn}`.replace(/[^a-zA-Z0-9_]/g, "_"),
-            },
-          ]
-        : [
-            {
-              column: metricColumn,
-              aggregation,
-              alias:
-                aggregation === "count" && metricColumn === "*"
-                  ? "count_rows"
-                  : `${aggregation}_${metricColumn}`.replace(/[^a-zA-Z0-9_]/g, "_"),
-            },
-          ],
+    dimensions: draft.dimensions,
+    metrics: draft.metrics.map(normalizeMetric),
     filters: draft.filterValue.trim().length
       ? [
           {
             column: draft.filterColumn,
-            operator: draft.filterOperator as "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "contains",
+            operator: draft.filterOperator as
+              | "eq"
+              | "neq"
+              | "gt"
+              | "gte"
+              | "lt"
+              | "lte"
+              | "contains",
             value: draft.filterValue.trim(),
           },
         ]
@@ -217,52 +236,47 @@ export function normalizeDraftForDataset(input: {
   current: {
     tableMode: TableMode
     tableColumns: string[]
-    dimension: string
-    metric: string
-    aggregation: Aggregation
+    dimensions: string[]
+    metrics: MetricDraft[]
     filterColumn: string
   }
 }) {
   const { dataset, chartType, current } = input
+  const columnMap = new Map((dataset?.columns ?? []).map((column) => [column.name, column]))
+  const preferredDimensions = getDefaultDimensions(dataset, chartType)
+  const preferredMetrics = getDefaultMetrics(dataset)
+  const preferredTableColumns = getDefaultTableColumns(dataset)
   const dimensionOptions = getDimensionOptions(dataset, chartType)
   const metricOptions = getMetricOptions(dataset)
-  const columnMap = new Map((dataset?.columns ?? []).map((column) => [column.name, column]))
 
-  const preferredDimension = getDefaultDimension(dataset, chartType)
-  const preferredMetric = getDefaultMetric(dataset)
-  const preferredAggregation = getDefaultAggregation(preferredMetric)
-  const preferredTableColumns = getDefaultTableColumns(dataset)
+  const validDimensions = current.dimensions.filter((dimension) =>
+    dimensionOptions.some((column) => column.name === dimension),
+  )
+  const validMetrics = current.metrics.filter((metric) =>
+    metricOptions.some((option) => option.value === metric.column) || metric.column === COUNT_ROWS_METRIC,
+  )
   const validTableColumns = current.tableColumns.filter((column) =>
     dataset?.columns.some((entry) => entry.name === column),
   )
 
-  const currentDimensionType = columnMap.get(current.dimension)?.type
-  const dimensionExists = dimensionOptions.some((column) => column.name === current.dimension)
-  const metricExists = metricOptions.some((option) => option.value === current.metric)
-  const shouldPreferChartDimension =
-      (chartType === "line" && currentDimensionType !== "date" && preferredDimension !== current.dimension) ||
-      ((chartType === "bar" || chartType === "pie") &&
-        currentDimensionType !== "string" &&
-        preferredDimension !== current.dimension)
-
   return {
-    tableMode:
-      chartType === "table" ? current.tableMode : getDefaultTableMode(),
+    tableMode: chartType === "table" ? current.tableMode : getDefaultTableMode(),
     tableColumns:
       chartType === "table"
         ? validTableColumns.length > 0
           ? validTableColumns
           : preferredTableColumns
         : [],
-    dimension:
-      dimensionExists && !shouldPreferChartDimension ? current.dimension : preferredDimension,
-    metric: metricExists ? current.metric : preferredMetric,
-    aggregation:
-      current.metric === COUNT_ROWS_METRIC
-        ? "count"
-        : current.aggregation === "count"
-          ? preferredAggregation
-          : current.aggregation,
+    dimensions:
+      chartType === "table" ? validDimensions : validDimensions.length > 0 ? validDimensions : preferredDimensions,
+    metrics:
+      chartType === "table"
+        ? validMetrics.length > 0
+          ? validMetrics
+          : preferredMetrics
+        : validMetrics.length > 0
+          ? validMetrics
+          : preferredMetrics,
     filterColumn:
       dataset?.columns.some((column) => column.name === current.filterColumn)
         ? current.filterColumn

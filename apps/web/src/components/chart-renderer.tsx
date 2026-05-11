@@ -3,6 +3,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -30,17 +31,39 @@ const chartPalette = [
   "var(--chart-5)",
 ]
 
-function metricKey(query: QueryConfig) {
-  const metric = query.metrics[0]
+function metricKey(query: QueryConfig, index: number) {
+  const metric = query.metrics[index]
   if (!metric) {
-    return "value"
+    return `value_${index}`
   }
 
-  return metric.alias || `${metric.aggregation}_${metric.column}`.replace(/[^a-zA-Z0-9_]/g, "_")
+  if (metric.alias) {
+    return metric.alias
+  }
+
+  if (metric.aggregation === "count" && metric.column === "*") {
+    return "count_rows"
+  }
+
+  return `${metric.aggregation}_${metric.column}`.replace(/[^a-zA-Z0-9_]/g, "_")
 }
 
-function labelKey(query: QueryConfig) {
-  return query.dimensions[0] ?? "__all__"
+function labelKey(row: Record<string, unknown>, dimensions: string[]) {
+  if (dimensions.length === 0) {
+    return "__all__"
+  }
+
+  return dimensions
+    .map((dimension) => String(row[dimension] ?? ""))
+    .filter(Boolean)
+    .join(" · ")
+}
+
+function chartRows(query: QueryConfig, preview: QueryPreviewResult) {
+  return preview.rows.map((row) => ({
+    ...row,
+    __label: labelKey(row, query.dimensions),
+  }))
 }
 
 export function ChartRenderer({
@@ -52,8 +75,8 @@ export function ChartRenderer({
   query: QueryConfig
   preview: QueryPreviewResult
 }) {
-  const dataKey = metricKey(query)
-  const xKey = labelKey(query)
+  const rows = chartRows(query, preview)
+  const metricKeys = query.metrics.map((_, index) => metricKey(query, index))
 
   if (preview.rows.length === 0) {
     return (
@@ -89,19 +112,21 @@ export function ChartRenderer({
   }
 
   if (chartType === "pie") {
+    const firstMetric = metricKeys[0] ?? "value_0"
     return (
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <RechartsTooltip />
+          <Legend />
           <Pie
-            data={preview.rows}
-            dataKey={dataKey}
-            nameKey={xKey}
+            data={rows}
+            dataKey={firstMetric}
+            nameKey="__label"
             innerRadius={58}
             outerRadius={100}
             paddingAngle={4}
           >
-            {preview.rows.map((_, index) => (
+            {rows.map((_, index) => (
               <Cell key={index} fill={chartPalette[index % chartPalette.length]} />
             ))}
           </Pie>
@@ -113,18 +138,22 @@ export function ChartRenderer({
   if (chartType === "line") {
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={preview.rows}>
+        <LineChart data={rows}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis dataKey={xKey} tickLine={false} axisLine={false} />
+          <XAxis dataKey="__label" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
           <RechartsTooltip />
-          <Line
-            type="monotone"
-            dataKey={dataKey}
-            stroke="var(--chart-2)"
-            strokeWidth={2.25}
-            dot={false}
-          />
+          <Legend />
+          {metricKeys.map((metricKeyName, index) => (
+            <Line
+              key={metricKeyName}
+              type="monotone"
+              dataKey={metricKeyName}
+              stroke={chartPalette[index % chartPalette.length]}
+              strokeWidth={2.25}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     )
@@ -132,12 +161,20 @@ export function ChartRenderer({
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={preview.rows}>
+      <BarChart data={rows}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-        <XAxis dataKey={xKey} tickLine={false} axisLine={false} />
+        <XAxis dataKey="__label" tickLine={false} axisLine={false} />
         <YAxis tickLine={false} axisLine={false} />
         <RechartsTooltip />
-        <Bar dataKey={dataKey} fill="var(--chart-1)" radius={[8, 8, 0, 0]} />
+        <Legend />
+        {metricKeys.map((metricKeyName, index) => (
+          <Bar
+            key={metricKeyName}
+            dataKey={metricKeyName}
+            fill={chartPalette[index % chartPalette.length]}
+            radius={[8, 8, 0, 0]}
+          />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   )

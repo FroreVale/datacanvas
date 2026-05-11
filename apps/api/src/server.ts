@@ -148,18 +148,34 @@ async function validateQueryAgainstDataset(
       }
     }
   } else {
-    if (query.dimensions.length !== 1) {
+    if (query.dimensions.length === 0) {
       issues.push({
         path: ["dimensions"],
-        message: `${query.chartType.toUpperCase()} charts require exactly one dimension`,
+        message: `${query.chartType.toUpperCase()} charts require at least one dimension`,
       })
     }
 
-    if (query.metrics.length !== 1) {
+    if (query.metrics.length === 0) {
       issues.push({
         path: ["metrics"],
-        message: `${query.chartType.toUpperCase()} charts require exactly one metric`,
+        message: `${query.chartType.toUpperCase()} charts require at least one metric`,
       })
+    }
+
+    if (query.chartType === "pie") {
+      if (query.dimensions.length !== 1) {
+        issues.push({
+          path: ["dimensions"],
+          message: "Pie charts require exactly one category dimension",
+        })
+      }
+
+      if (query.metrics.length !== 1) {
+        issues.push({
+          path: ["metrics"],
+          message: "Pie charts require exactly one metric",
+        })
+      }
     }
 
     if (query.chartType === "line") {

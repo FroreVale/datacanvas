@@ -12,7 +12,9 @@ import {
   COUNT_ROWS_METRIC,
   getDefaultAggregation,
   getDefaultDimension,
+  getDefaultDimensions,
   getDefaultMetric,
+  getDefaultMetrics,
   getDefaultTableColumns,
   getDefaultTableMode,
 } from "@/lib/chart-builder"
@@ -49,14 +51,18 @@ function getInitialRole(): Role {
   return "editor"
 }
 
+export type BuilderMetric = {
+  column: string
+  aggregation: Aggregation
+}
+
 export type BuilderDraft = {
   chartTitle: string
   chartType: ChartType
   tableMode: TableMode
   tableColumns: string[]
-  dimension: string
-  metric: string
-  aggregation: Aggregation
+  dimensions: string[]
+  metrics: BuilderMetric[]
   filterColumn: string
   filterOperator: FilterOperator
   filterValue: string
@@ -78,17 +84,20 @@ type AppStore = {
 }
 
 function defaultDraft(dataset?: DatasetSummary): BuilderDraft {
-  const dimension = getDefaultDimension(dataset, "bar")
-  const metric = getDefaultMetric(dataset)
+  const defaultDimensions = getDefaultDimensions(dataset, "bar")
+  const defaultMetrics = getDefaultMetrics(dataset)
+  const firstMetric = defaultMetrics[0]?.column ?? COUNT_ROWS_METRIC
 
   return {
-    chartTitle: metric === COUNT_ROWS_METRIC ? "Count by Product" : "Revenue by Product",
+    chartTitle: firstMetric === COUNT_ROWS_METRIC ? "Count by Product" : "Revenue by Product",
     chartType: "bar",
     tableMode: getDefaultTableMode(),
     tableColumns: getDefaultTableColumns(dataset),
-    dimension,
-    metric,
-    aggregation: getDefaultAggregation(metric),
+    dimensions: defaultDimensions.length > 0 ? defaultDimensions : [getDefaultDimension(dataset, "bar")],
+    metrics:
+      defaultMetrics.length > 0
+        ? defaultMetrics
+        : [{ column: getDefaultMetric(dataset), aggregation: getDefaultAggregation(getDefaultMetric(dataset)) }],
     filterColumn: dataset?.columns[0]?.name ?? "region",
     filterOperator: "contains",
     filterValue: "",
