@@ -13,6 +13,12 @@ type MetricDraft = {
   aggregation: Aggregation
 }
 
+type FilterDraft = {
+  column: string
+  operator: string
+  value: string
+}
+
 type ChartRequirements = {
   dimensionRequired: boolean
   metricRequired: boolean
@@ -58,9 +64,9 @@ export function getChartRequirements(
       return {
         dimensionRequired: true,
         metricRequired: true,
-        dimensionLabel: "Group by",
-        metricLabel: "Metrics",
-        description: "Bar charts compare grouped categories against one or more metrics.",
+        dimensionLabel: "Category",
+        metricLabel: "Metric",
+        description: "Bar charts should use one category and one aggregate.",
       }
   }
 }
@@ -168,29 +174,38 @@ export function buildQueryConfig(
     tableColumns: string[]
     dimensions: string[]
     metrics: MetricDraft[]
-    filterColumn: string
-    filterOperator: string
-    filterValue: string
+    filterColumn?: string
+    filterOperator?: string
+    filterValue?: string
+    filters?: FilterDraft[]
     limit: number
   },
   datasetId: string,
 ): QueryConfig {
-  const dimensions = draft.chartType === "pie" ? draft.dimensions.slice(0, 1) : draft.dimensions
-  const metrics = draft.chartType === "pie" ? draft.metrics.slice(0, 1) : draft.metrics
-
-  if (draft.chartType === "table" && draft.tableMode === "raw") {
-    return {
-      datasetId,
-      chartType: draft.chartType,
-      tableMode: draft.tableMode,
-      tableColumns: draft.tableColumns,
-      dimensions: [],
-      metrics: [],
-      filters: draft.filterValue.trim().length
+  const singleSeriesChart = draft.chartType === "pie" || draft.chartType === "bar"
+  const dimensions = singleSeriesChart ? draft.dimensions.slice(0, 1) : draft.dimensions
+  const metrics = singleSeriesChart ? draft.metrics.slice(0, 1) : draft.metrics
+  const filters =
+    draft.filters !== undefined
+      ? draft.filters
+          .filter((filter) => filter.column.trim() && filter.value.trim())
+          .map((filter) => ({
+            column: filter.column,
+            operator: filter.operator as
+              | "eq"
+              | "neq"
+              | "gt"
+              | "gte"
+              | "lt"
+              | "lte"
+              | "contains",
+            value: filter.value.trim(),
+          }))
+      : draft.filterValue?.trim().length
         ? [
             {
-              column: draft.filterColumn,
-              operator: draft.filterOperator as
+              column: draft.filterColumn ?? "",
+              operator: (draft.filterOperator ?? "eq") as
                 | "eq"
                 | "neq"
                 | "gt"
@@ -200,8 +215,18 @@ export function buildQueryConfig(
                 | "contains",
               value: draft.filterValue.trim(),
             },
-          ]
-        : [],
+          ].filter((filter) => filter.column.trim())
+        : []
+
+  if (draft.chartType === "table" && draft.tableMode === "raw") {
+    return {
+      datasetId,
+      chartType: draft.chartType,
+      tableMode: draft.tableMode,
+      tableColumns: draft.tableColumns,
+      dimensions: [],
+      metrics: [],
+      filters,
       limit: draft.limit,
     }
   }
@@ -213,22 +238,7 @@ export function buildQueryConfig(
     tableColumns: [],
     dimensions,
     metrics: metrics.map(normalizeMetric),
-    filters: draft.filterValue.trim().length
-      ? [
-          {
-            column: draft.filterColumn,
-            operator: draft.filterOperator as
-              | "eq"
-              | "neq"
-              | "gt"
-              | "gte"
-              | "lt"
-              | "lte"
-              | "contains",
-            value: draft.filterValue.trim(),
-          },
-        ]
-      : [],
+    filters,
     limit: draft.limit,
   }
 }
@@ -275,7 +285,7 @@ export function normalizeDraftForDataset(input: {
     dimensions:
       chartType === "table"
         ? validDimensions
-        : chartType === "pie"
+        : chartType === "pie" || chartType === "bar"
           ? pieDimensions.length > 0
             ? pieDimensions
             : preferredDimensions.slice(0, 1)
@@ -287,7 +297,7 @@ export function normalizeDraftForDataset(input: {
         ? validMetrics.length > 0
           ? validMetrics
           : preferredMetrics
-        : chartType === "pie"
+        : chartType === "pie" || chartType === "bar"
           ? pieMetrics.length > 0
             ? pieMetrics
             : preferredMetrics.slice(0, 1)

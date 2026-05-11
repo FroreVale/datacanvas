@@ -31,7 +31,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen min-h-0 overflow-hidden">
-      <SidebarProvider defaultOpen>
+      <SidebarProvider defaultOpen style={{ "--sidebar-width": "15rem" } as any}>
         <AppSidebar />
         <SidebarInset className="h-full min-h-0 overflow-hidden bg-background">
           <header className="sticky top-0 z-20 border-b border-border/70 bg-background/80 backdrop-blur">

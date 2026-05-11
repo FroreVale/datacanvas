@@ -31,6 +31,14 @@ const chartPalette = [
   "var(--chart-5)",
 ]
 
+const tooltipStyle = {
+  backgroundColor: "var(--popover)",
+  border: "1px solid var(--border)",
+  borderRadius: "0.75rem",
+  color: "var(--foreground)",
+  boxShadow: "0 12px 32px rgba(0, 0, 0, 0.12)",
+}
+
 function metricKey(query: QueryConfig, index: number) {
   const metric = query.metrics[index]
   if (!metric) {
@@ -120,7 +128,12 @@ export function ChartRenderer({
     return (
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <RechartsTooltip />
+          <RechartsTooltip
+            contentStyle={tooltipStyle}
+            labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+            itemStyle={{ color: "var(--foreground)" }}
+            cursor={{ fill: "var(--muted)", opacity: 0.25 }}
+          />
           <Legend />
           <Pie
             data={rows}
@@ -146,7 +159,12 @@ export function ChartRenderer({
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="__label" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
-          <RechartsTooltip />
+          <RechartsTooltip
+            contentStyle={tooltipStyle}
+            labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+            itemStyle={{ color: "var(--foreground)" }}
+            cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1, opacity: 0.35 }}
+          />
           <Legend />
           {metricKeys.map((metricKeyName, index) => (
             <Line
@@ -169,7 +187,12 @@ export function ChartRenderer({
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis dataKey="__label" tickLine={false} axisLine={false} />
         <YAxis tickLine={false} axisLine={false} />
-        <RechartsTooltip />
+        <RechartsTooltip
+          contentStyle={tooltipStyle}
+          labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+          itemStyle={{ color: "var(--foreground)" }}
+          cursor={{ fill: "var(--muted)", opacity: 0.25 }}
+        />
         <Legend />
         {metricKeys.map((metricKeyName, index) => (
           <Bar

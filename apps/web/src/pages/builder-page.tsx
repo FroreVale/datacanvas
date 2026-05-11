@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowRight,
@@ -27,6 +27,7 @@ import { ChartRenderer } from "@/components/chart-renderer"
 import {
   aggregationSchema,
   chartTypeSchema,
+  type Chart,
   type FilterOperator,
   type QueryConfig,
   type TableMode,
@@ -40,8 +41,13 @@ import {
   getTableModeOptions,
   normalizeDraftForDataset,
 } from "@/lib/chart-builder"
+import { useLocation } from "react-router-dom"
 
 type FieldDialogKind = "dimension" | "metric" | "tableColumn" | null
+type BuilderLocationState = {
+  chartId?: string
+  chart?: Chart
+}
 
 function metricLabel(metric: BuilderMetric) {
   if (metric.column === COUNT_ROWS_METRIC) {
@@ -167,8 +173,31 @@ function ListBox({
   )
 }
 
+function chartQueryToDraft(query?: QueryConfig | null) {
+  const safeQuery = query ?? {
+    datasetId: "",
+    tableColumns: [],
+    dimensions: [],
+    metrics: [],
+    filters: [],
+  }
+
+  return {
+    chartType: safeQuery.chartType ?? "bar",
+    tableMode: safeQuery.tableMode ?? "summary",
+    tableColumns: safeQuery.tableColumns ?? [],
+    dimensions: safeQuery.dimensions ?? [],
+    metrics: (safeQuery.metrics ?? []).map((metric) => ({
+      column: metric.column,
+      aggregation: metric.aggregation,
+    })),
+    limit: safeQuery.limit ?? 20,
+  }
+}
+
 export function BuilderPage() {
   const queryClient = useQueryClient()
+  const location = useLocation()
   const role = useAppStore((state) => state.role)
   const activeDatasetId = useAppStore((state) => state.activeDatasetId)
   const activeDashboardId = useAppStore((state) => state.activeDashboardId)
@@ -271,7 +300,65 @@ export function BuilderPage() {
   const [filterColumnDraft, setFilterColumnDraft] = useState("")
   const [filterOperatorDraft, setFilterOperatorDraft] = useState<FilterOperator>("eq")
   const [filterValueDraft, setFilterValueDraft] = useState("")
+  const [hydratingChartPreview, setHydratingChartPreview] = useState(false)
+  const [autoPreviewLocationKey, setAutoPreviewLocationKey] = useState<string | null>(null)
+  const hydratedLocationKeyRef = useRef<string | null>(null)
   const preview = previewMutation.data
+
+  useEffect(() => {
+    const state = location.state as BuilderLocationState | null
+    const chart = state?.chart
+    const chartId = chart?.id ?? state?.chartId
+
+    if (!chartId || hydratedLocationKeyRef.current === location.key) {
+      return
+    }
+
+    const resolvedChart =
+      chart ?? 
+      dashboardsQuery.data?.flatMap((dashboard) => dashboard.charts).find((entry) => entry.id === chartId)
+    if (!resolvedChart) {
+      return
+    }
+
+    const hydratedQuery = resolvedChart.query
+    if (!hydratedQuery) {
+      return
+    }
+
+    const dataset = datasetsQuery.data?.find((entry) => entry.id === resolvedChart.datasetId)
+    if (dataset) {
+      setActiveDatasetId(dataset.id)
+      setDraftFromDataset(dataset)
+    }
+
+    setActiveDashboardId(resolvedChart.dashboardId)
+
+    const nextDraft = chartQueryToDraft(hydratedQuery)
+    const hydratedFilters = (hydratedQuery.filters ?? []).map((filter) => ({
+      column: filter.column,
+      operator: filter.operator,
+      value: String(filter.value ?? ""),
+    }))
+
+    setDraft(nextDraft)
+    setFiltersDraft(hydratedFilters)
+    setHydratingChartPreview(true)
+    setPreviewConfig(null)
+    previewMutation.reset()
+    setAutoPreviewLocationKey(location.key)
+    hydratedLocationKeyRef.current = location.key
+  }, [
+    dashboardsQuery.data,
+    datasetsQuery.data,
+    location.state,
+    location.key,
+    previewMutation,
+    setActiveDatasetId,
+    setActiveDashboardId,
+    setDraft,
+    setDraftFromDataset,
+  ])
 
   useEffect(() => {
     if (filterDialogOpen) {
@@ -310,6 +397,8 @@ export function BuilderPage() {
 
   const previewMatchesCurrentQuery =
     !!queryConfig && !!previewConfig && JSON.stringify(queryConfig) === JSON.stringify(previewConfig)
+  const renderedQuery = previewConfig ?? queryConfig
+  const renderedChartType = previewConfig?.chartType ?? draft.chartType
 
   const isPreviewAllowed =
     !!activeDataset &&
@@ -318,6 +407,30 @@ export function BuilderPage() {
         ? draft.tableColumns.length > 0
         : draft.dimensions.length > 0 && draft.metrics.length > 0
       : draft.dimensions.length > 0 && draft.metrics.length > 0)
+
+  useEffect(() => {
+    if (autoPreviewLocationKey !== location.key) {
+      return
+    }
+
+    if (!queryConfig || !isPreviewAllowed || previewMutation.isPending) {
+      return
+    }
+
+    setAutoPreviewLocationKey(null)
+    setPreviewConfig(queryConfig)
+    previewMutation.mutate(queryConfig, {
+      onSettled: () => {
+        setHydratingChartPreview(false)
+      },
+    })
+  }, [
+    autoPreviewLocationKey,
+    isPreviewAllowed,
+    location.key,
+    previewMutation,
+    queryConfig,
+  ])
 
   const previewHandler = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -371,7 +484,7 @@ export function BuilderPage() {
     if (fieldDialog === "dimension" && newFieldColumn) {
       setDraft({
         dimensions:
-          draft.chartType === "pie"
+          draft.chartType === "pie" || draft.chartType === "bar"
             ? [newFieldColumn]
             : draft.dimensions.includes(newFieldColumn)
               ? draft.dimensions
@@ -388,7 +501,7 @@ export function BuilderPage() {
           : { column: newFieldColumn, aggregation: newFieldAggregation }
       setDraft({
         metrics:
-          draft.chartType === "pie"
+          draft.chartType === "pie" || draft.chartType === "bar"
             ? [nextMetric]
             : draft.metrics.some(
                 (metric) =>
@@ -477,8 +590,8 @@ export function BuilderPage() {
   ]
 
   const changeChartType = (chartType: (typeof chartTypeOptions)[number]["value"]) => {
-    const nextDimensions = chartType === "pie" ? draft.dimensions.slice(0, 1) : draft.dimensions
-    const nextMetrics = chartType === "pie" ? draft.metrics.slice(0, 1) : draft.metrics
+    const nextDimensions = chartType === "pie" || chartType === "bar" ? draft.dimensions.slice(0, 1) : draft.dimensions
+    const nextMetrics = chartType === "pie" || chartType === "bar" ? draft.metrics.slice(0, 1) : draft.metrics
 
     setDraft({
       chartType,
@@ -603,7 +716,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
-                      maxItems={draft.chartType === "pie" ? 1 : undefined}
+                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -616,7 +729,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
-                      maxItems={draft.chartType === "pie" ? 1 : undefined}
+                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),
@@ -633,7 +746,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
-                      maxItems={draft.chartType === "pie" ? 1 : undefined}
+                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -646,7 +759,7 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
-                      maxItems={draft.chartType === "pie" ? 1 : undefined}
+                      maxItems={draft.chartType === "pie" || draft.chartType === "bar" ? 1 : undefined}
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),
@@ -703,9 +816,13 @@ export function BuilderPage() {
             </div>
             <div className="sticky bottom-0 shrink-0 border-t border-border/60 bg-background pt-4">
               <div className="flex flex-wrap items-center gap-3">
-                <Button type="submit" variant="outline" disabled={!isPreviewAllowed || previewMutation.isPending}>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={!isPreviewAllowed || (previewMutation.isPending && !hydratingChartPreview)}
+                >
                   <ArrowRight className="size-4" />
-                  {previewMutation.isPending ? "Previewing..." : "Preview"}
+                  {previewMutation.isPending && !hydratingChartPreview ? "Previewing..." : "Preview"}
                 </Button>
                 <Button
                   type="button"
@@ -754,7 +871,11 @@ export function BuilderPage() {
               </Alert>
             ) : null}
 
-            {preview ? (
+            {hydratingChartPreview && !preview ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center border border-dashed border-border/60 text-sm text-muted-foreground">
+                Loading saved chart preview...
+              </div>
+            ) : preview ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                 <div
                   className={
@@ -763,9 +884,9 @@ export function BuilderPage() {
                       : "flex-1 min-h-0 overflow-hidden"
                   }
                 >
-                  <ChartRenderer
-                    chartType={draft.chartType}
-                    query={queryConfig ?? buildQueryConfig(draft, activeDataset?.id ?? "")}
+                <ChartRenderer
+                    chartType={renderedChartType}
+                    query={renderedQuery ?? buildQueryConfig(draft, activeDataset?.id ?? "")}
                     preview={preview}
                   />
                 </div>

@@ -169,7 +169,7 @@ export function DashboardPage() {
   })
 
   return (
-    <div className="grid gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_320px]">
         <Card className="overflow-hidden border-border/70 bg-card/85 shadow-sm backdrop-blur">
           <div className="bg-gradient-to-br from-primary/12 via-transparent to-chart-2/10">
@@ -237,27 +237,29 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      {activeDashboard ? (
-        <DashboardCanvas
-          dashboard={activeDashboard}
-          role={role}
-          ownerSessionId={ownerSessionId}
-          onDelete={(chartId) =>
-            deleteMutation.mutate({
-              chartId,
-              role,
-              ownerSessionId,
-            })
-          }
-        />
-      ) : (
-        <Alert>
-          <AlertTitle>No dashboard available</AlertTitle>
-          <AlertDescription>
-            Create or seed a dashboard before rendering the chart canvas.
-          </AlertDescription>
-        </Alert>
-      )}
+      <div className="min-h-0 flex-1 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+        {activeDashboard ? (
+          <DashboardCanvas
+            dashboard={activeDashboard}
+            role={role}
+            ownerSessionId={ownerSessionId}
+            onDelete={(chartId) =>
+              deleteMutation.mutate({
+                chartId,
+                role,
+                ownerSessionId,
+              })
+            }
+          />
+        ) : (
+          <Alert>
+            <AlertTitle>No dashboard available</AlertTitle>
+            <AlertDescription>
+              Create or seed a dashboard before rendering the chart canvas.
+            </AlertDescription>
+          </Alert>
+        )}
+      </div>
     </div>
   )
 }

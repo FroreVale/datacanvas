@@ -1,6 +1,7 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Database, FileUp, Plus } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { fetchDatasets, uploadDataset } from "@/lib/api"
 import { useAppStore } from "@/stores/use-app-store"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -10,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 export function DatasetsPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const setActiveDatasetId = useAppStore((state) => state.setActiveDatasetId)
   const setDraftFromDataset = useAppStore((state) => state.setDraftFromDataset)
   const role = useAppStore((state) => state.role)
@@ -116,6 +118,7 @@ export function DatasetsPage() {
                 onClick={() => {
                   setActiveDatasetId(dataset.id)
                   setDraftFromDataset(dataset)
+                  navigate("/builder")
                 }}
               >
                 <TableCell className="font-medium">{dataset.name}</TableCell>
