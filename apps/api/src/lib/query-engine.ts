@@ -12,6 +12,16 @@ type RecordRow = Record<string, QueryValue>
 
 let duckdbInstancePromise: Promise<DuckDBInstance> | null = null
 
+function resolveTableMode(query: QueryConfig) {
+  if (query.tableMode) {
+    return query.tableMode
+  }
+
+  return query.tableColumns.length > 0 && query.dimensions.length === 0 && query.metrics.length === 0
+    ? "raw"
+    : "summary"
+}
+
 function getDuckDBInstance() {
   duckdbInstancePromise ??= DuckDBInstance.create(":memory:")
   return duckdbInstancePromise
@@ -22,6 +32,9 @@ function escapeIdentifier(identifier: string) {
 }
 
 function metricKey(metricColumn: string, aggregation: string, alias?: string) {
+  if (aggregation === "count" && metricColumn === "*") {
+    return alias || "count_rows"
+  }
   return alias || `${aggregation}_${metricColumn}`.replace(/[^a-zA-Z0-9_]/g, "_")
 }
 
@@ -99,6 +112,15 @@ function buildWhereClause(
 }
 
 function buildSelectClause(query: QueryConfig) {
+  if (query.chartType === "table" && resolveTableMode(query) === "raw") {
+    const rawColumns = query.tableColumns.map((column) => escapeIdentifier(column))
+    if (rawColumns.length === 0) {
+      return "SELECT *"
+    }
+
+    return `SELECT ${rawColumns.join(", ")}`
+  }
+
   const dimensions = query.dimensions.map((dimension) => escapeIdentifier(dimension))
   const metricSelects = query.metrics.map((metric) => {
     const alias = metricKey(metric.column, metric.aggregation, metric.alias)
@@ -125,6 +147,10 @@ function buildSelectClause(query: QueryConfig) {
 }
 
 function buildGroupByClause(query: QueryConfig) {
+  if (query.chartType === "table" && resolveTableMode(query) === "raw") {
+    return ""
+  }
+
   if (query.dimensions.length === 0) {
     return ""
   }
@@ -133,6 +159,10 @@ function buildGroupByClause(query: QueryConfig) {
 }
 
 function buildOrderByClause(query: QueryConfig) {
+  if (query.chartType === "table" && resolveTableMode(query) === "raw") {
+    return ""
+  }
+
   if (query.dimensions.length === 0) {
     return ""
   }
@@ -165,6 +195,13 @@ function buildSqlWithColumns(query: QueryConfig, columns: DatasetColumn[]) {
 }
 
 function buildPreviewColumns(query: QueryConfig): PreviewColumn[] {
+  if (query.chartType === "table" && resolveTableMode(query) === "raw") {
+    return query.tableColumns.map((column) => ({
+      key: column,
+      label: column.charAt(0).toUpperCase() + column.slice(1),
+    }))
+  }
+
   return [
     ...(query.dimensions.map((dimension) => ({
       key: dimension,
@@ -178,6 +215,10 @@ function buildPreviewColumns(query: QueryConfig): PreviewColumn[] {
 }
 
 export function buildMetricLabel(metric: QueryConfig["metrics"][number]) {
+  if (metric.aggregation === "count" && metric.column === "*") {
+    return "Count rows"
+  }
+
   return metric.alias || `${metric.aggregation.toUpperCase()} ${metric.column}`
 }
 

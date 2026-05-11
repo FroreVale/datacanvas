@@ -6,7 +6,16 @@ import {
   type DatasetSummary,
   type FilterOperator,
   type Role,
+  type TableMode,
 } from "@shared/index"
+import {
+  COUNT_ROWS_METRIC,
+  getDefaultAggregation,
+  getDefaultDimension,
+  getDefaultMetric,
+  getDefaultTableColumns,
+  getDefaultTableMode,
+} from "@/lib/chart-builder"
 
 const storageKey = "datacanvas-session"
 const roleKey = "datacanvas-role"
@@ -43,6 +52,8 @@ function getInitialRole(): Role {
 export type BuilderDraft = {
   chartTitle: string
   chartType: ChartType
+  tableMode: TableMode
+  tableColumns: string[]
   dimension: string
   metric: string
   aggregation: Aggregation
@@ -67,17 +78,17 @@ type AppStore = {
 }
 
 function defaultDraft(dataset?: DatasetSummary): BuilderDraft {
-  const dimension =
-    dataset?.columns.find((column) => column.type === "string" || column.type === "date")
-      ?.name ?? "product"
-  const metric = dataset?.columns.find((column) => column.type === "number")?.name ?? "revenue"
+  const dimension = getDefaultDimension(dataset, "bar")
+  const metric = getDefaultMetric(dataset)
 
   return {
-    chartTitle: "Revenue by Product",
+    chartTitle: metric === COUNT_ROWS_METRIC ? "Count by Product" : "Revenue by Product",
     chartType: "bar",
+    tableMode: getDefaultTableMode(),
+    tableColumns: getDefaultTableColumns(dataset),
     dimension,
     metric,
-    aggregation: "sum",
+    aggregation: getDefaultAggregation(metric),
     filterColumn: dataset?.columns[0]?.name ?? "region",
     filterOperator: "contains",
     filterValue: "",
@@ -114,6 +125,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       draft: {
         ...nextDraft,
         chartType: state.draft.chartType,
+        tableMode: state.draft.tableMode,
       },
       activeDatasetId: dataset?.id ?? state.activeDatasetId,
     }))

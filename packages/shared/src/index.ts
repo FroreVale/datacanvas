@@ -42,6 +42,9 @@ export type DatasetDetail = z.infer<typeof datasetDetailSchema>
 export const chartTypeSchema = z.enum(["bar", "line", "pie", "table"])
 export type ChartType = z.infer<typeof chartTypeSchema>
 
+export const tableModeSchema = z.enum(["raw", "summary"])
+export type TableMode = z.infer<typeof tableModeSchema>
+
 export const aggregationSchema = z.enum([
   "sum",
   "avg",
@@ -86,8 +89,11 @@ export type QueryMetric = z.infer<typeof queryMetricSchema>
 
 export const queryConfigSchema = z.strictObject({
   datasetId: z.string().min(1),
+  chartType: chartTypeSchema.optional(),
+  tableMode: tableModeSchema.optional(),
+  tableColumns: z.array(z.string().min(1)).default([]),
   dimensions: z.array(z.string().min(1)).default([]),
-  metrics: z.array(queryMetricSchema).min(1),
+  metrics: z.array(queryMetricSchema).default([]),
   filters: z.array(queryFilterSchema).default([]),
   limit: z.number().int().positive().max(1000).optional(),
 })

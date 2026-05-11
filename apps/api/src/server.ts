@@ -57,6 +57,16 @@ function buildQueryError(
   })
 }
 
+function resolveTableMode(query: ReturnType<typeof queryConfigSchema.parse>) {
+  if (query.tableMode) {
+    return query.tableMode
+  }
+
+  return query.tableColumns.length > 0 && query.dimensions.length === 0 && query.metrics.length === 0
+    ? "raw"
+    : "summary"
+}
+
 async function validateQueryAgainstDataset(
   query: ReturnType<typeof queryConfigSchema.parse>,
   datasetId: string,
@@ -82,6 +92,10 @@ async function validateQueryAgainstDataset(
   }
 
   for (const metric of query.metrics) {
+    if (metric.aggregation === "count" && metric.column === "*") {
+      continue
+    }
+
     const column = columns.get(metric.column)
     if (!column) {
       issues.push({
@@ -96,6 +110,69 @@ async function validateQueryAgainstDataset(
         path: ["metrics"],
         message: `Aggregation ${metric.aggregation.toUpperCase()} requires a numeric column: ${metric.column}`,
       })
+    }
+  }
+
+  if (query.chartType === "table") {
+    const tableMode = resolveTableMode(query)
+
+    if (tableMode === "summary") {
+      if (query.dimensions.length === 0) {
+        issues.push({
+          path: ["dimensions"],
+          message: "Summary tables require at least one grouping column",
+        })
+      }
+
+      if (query.metrics.length === 0) {
+        issues.push({
+          path: ["metrics"],
+          message: "Summary tables require at least one aggregate column",
+        })
+      }
+    } else {
+      if (query.tableColumns.length === 0) {
+        issues.push({
+          path: ["tableColumns"],
+          message: "Raw tables require at least one displayed column",
+        })
+      }
+
+      for (const columnName of query.tableColumns) {
+        if (!columns.has(columnName)) {
+          issues.push({
+            path: ["tableColumns"],
+            message: `Unknown table column: ${columnName}`,
+          })
+        }
+      }
+    }
+  } else {
+    if (query.dimensions.length !== 1) {
+      issues.push({
+        path: ["dimensions"],
+        message: `${query.chartType.toUpperCase()} charts require exactly one dimension`,
+      })
+    }
+
+    if (query.metrics.length !== 1) {
+      issues.push({
+        path: ["metrics"],
+        message: `${query.chartType.toUpperCase()} charts require exactly one metric`,
+      })
+    }
+
+    if (query.chartType === "line") {
+      const dimensionName = query.dimensions[0]
+      const selectedColumn = dimensionName ? columns.get(dimensionName) : undefined
+      const hasDateColumn = dataset.columns.some((column) => column.type === "date")
+
+      if (hasDateColumn && selectedColumn?.type !== "date") {
+        issues.push({
+          path: ["dimensions"],
+          message: "Line charts should use a date dimension when the dataset has one",
+        })
+      }
     }
   }
 
