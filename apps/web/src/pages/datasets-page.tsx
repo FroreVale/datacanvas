@@ -20,7 +20,6 @@ export function DatasetsPage() {
   const canDelete = role === "admin"
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [fileName, setFileName] = useState("")
-  const [csvText, setCsvText] = useState("")
 
   const datasetsQuery = useQuery({
     queryKey: ["datasets"],
@@ -34,7 +33,6 @@ export function DatasetsPage() {
       setActiveDatasetId(dataset.id)
       setDraftFromDataset(dataset)
       setFileName("")
-      setCsvText("")
       if (fileInputRef.current) {
         fileInputRef.current.value = ""
       }
@@ -67,7 +65,6 @@ export function DatasetsPage() {
 
     setFileName(file.name)
     const text = await file.text()
-    setCsvText(text)
 
     uploadMutation.mutate({
       filename: file.name,

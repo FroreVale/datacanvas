@@ -28,7 +28,6 @@ import {
   aggregationSchema,
   type FilterOperator,
   type QueryConfig,
-  type TableMode,
 } from "@shared/index"
 import {
   buildQueryConfig,
@@ -246,6 +245,7 @@ export function BuilderPage() {
         tableColumns: draft.tableColumns,
         dimensions: draft.dimensions,
         metrics: draft.metrics,
+        filterColumn: draft.filterColumn,
       },
     })
 
@@ -257,7 +257,7 @@ export function BuilderPage() {
     ) {
       setDraft(normalized)
     }
-  }, [activeDataset?.id, draft.chartType, draft.tableMode, setDraft])
+  }, [activeDataset?.id, draft.chartType, draft.filterColumn, draft.tableMode, setDraft])
 
   const requirements = useMemo(
     () => getChartRequirements(draft.chartType, draft.tableMode),
@@ -713,13 +713,6 @@ export function BuilderPage() {
                     <ListBox
                       title="Group by"
                       required={requirements.dimensionRequired}
-                      maxItems={
-                        draft.chartType === "pie" ||
-                        draft.chartType === "bar" ||
-                        draft.chartType === "line"
-                          ? 1
-                          : undefined
-                      }
                       entries={draft.dimensions.map((dimension) => ({
                         key: dimension,
                         value: dimension,
@@ -732,13 +725,6 @@ export function BuilderPage() {
                     <ListBox
                       title="Metrics"
                       required={requirements.metricRequired}
-                      maxItems={
-                        draft.chartType === "pie" ||
-                        draft.chartType === "bar" ||
-                        draft.chartType === "line"
-                          ? 1
-                          : undefined
-                      }
                       entries={draft.metrics.map((metric, index) => ({
                         key: `${metric.column}-${metric.aggregation}-${index}`,
                         value: metricLabel(metric),

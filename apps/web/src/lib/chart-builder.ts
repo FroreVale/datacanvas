@@ -257,7 +257,6 @@ export function normalizeDraftForDataset(input: {
   }
 }) {
   const { dataset, chartType, current } = input
-  const columnMap = new Map((dataset?.columns ?? []).map((column) => [column.name, column]))
   const preferredDimensions = getDefaultDimensions(dataset, chartType)
   const preferredMetrics = getDefaultMetrics(dataset)
   const preferredTableColumns = getDefaultTableColumns(dataset)
