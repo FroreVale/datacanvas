@@ -5,11 +5,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "setup": "prisma db push && prisma generate",
-    "postinstall": "pnpm setup",
-    "predev": "pnpm setup",
+    "prisma:bootstrap": "prisma db push && prisma generate",
+    "postinstall": "pnpm prisma:bootstrap",
+    "predev": "pnpm prisma:bootstrap",
     "dev": "tsx watch src/index.ts",
-    "prestart": "pnpm setup",
+    "prestart": "pnpm prisma:bootstrap",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json"
