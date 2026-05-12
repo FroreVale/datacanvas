@@ -238,6 +238,25 @@ function previewKey(datasetId: string, version: number, query: unknown) {
 export async function buildServer() {
   const app = Fastify({ logger: false })
 
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin
+    if (origin) {
+      reply.header("Access-Control-Allow-Origin", origin)
+      reply.header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+      reply.header(
+        "Access-Control-Allow-Headers",
+        request.headers["access-control-request-headers"] ?? "Content-Type,Authorization",
+      )
+      reply.header("Access-Control-Max-Age", "86400")
+      reply.header("Vary", "Origin")
+    }
+
+    if (request.method === "OPTIONS") {
+      reply.code(204).send()
+      return
+    }
+  })
+
   await ensureSeedData(sampleCsvPath)
 
   app.get("/api/health", async () => ({ status: "ok" }))
