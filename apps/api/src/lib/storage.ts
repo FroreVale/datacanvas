@@ -542,6 +542,7 @@ export async function ensureSeedData(sampleFilePath: string) {
         chartType: "bar",
         query: {
           datasetId: dataset.id,
+          tableColumns: [],
           dimensions: ["product"],
           metrics: [
             {
@@ -564,6 +565,7 @@ export async function ensureSeedData(sampleFilePath: string) {
         chartType: "line",
         query: {
           datasetId: dataset.id,
+          tableColumns: [],
           dimensions: ["date"],
           metrics: [
             {
@@ -586,6 +588,7 @@ export async function ensureSeedData(sampleFilePath: string) {
         chartType: "pie",
         query: {
           datasetId: dataset.id,
+          tableColumns: [],
           dimensions: ["region"],
           metrics: [
             {

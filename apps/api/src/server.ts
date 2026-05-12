@@ -74,6 +74,7 @@ async function validateQueryAgainstDataset(
   datasetId: string,
 ) {
   const dataset = await getDatasetById(datasetId)
+  const chartType = query.chartType ?? "bar"
   if (!dataset) {
     return {
       ok: false as const,
@@ -153,18 +154,18 @@ async function validateQueryAgainstDataset(
     if (query.dimensions.length === 0) {
       issues.push({
         path: ["dimensions"],
-        message: `${query.chartType.toUpperCase()} charts require at least one dimension`,
+        message: `${chartType.toUpperCase()} charts require at least one dimension`,
       })
     }
 
     if (query.metrics.length === 0) {
       issues.push({
         path: ["metrics"],
-        message: `${query.chartType.toUpperCase()} charts require at least one metric`,
+        message: `${chartType.toUpperCase()} charts require at least one metric`,
       })
     }
 
-    if (query.chartType === "pie") {
+    if (chartType === "pie") {
       if (query.dimensions.length !== 1) {
         issues.push({
           path: ["dimensions"],
@@ -180,7 +181,7 @@ async function validateQueryAgainstDataset(
       }
     }
 
-    if (query.chartType === "line") {
+    if (chartType === "line") {
       if (query.dimensions.length !== 1) {
         issues.push({
           path: ["dimensions"],
