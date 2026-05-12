@@ -32,6 +32,8 @@ cd datacanvas
 pnpm install
 ```
 
+`pnpm install` also generates the Prisma client automatically, so there is no extra setup step.
+
 ### Run locally
 
 Open two terminals:

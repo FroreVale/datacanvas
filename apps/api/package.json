@@ -5,7 +5,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "generate": "prisma generate",
+    "postinstall": "prisma generate",
+    "predev": "pnpm generate",
     "dev": "tsx watch src/index.ts",
+    "prestart": "pnpm generate",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json"
