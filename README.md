@@ -32,7 +32,7 @@ cd datacanvas
 pnpm install
 ```
 
-`pnpm install` also generates the Prisma client automatically, so there is no extra setup step.
+`pnpm install` also creates the SQLite tables and generates the Prisma client automatically, so there is no extra setup step.
 
 ### Run locally
 
